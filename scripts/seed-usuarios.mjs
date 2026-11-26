@@ -43,6 +43,11 @@ for (const u of usuarios) {
     if (e.code !== 'auth/user-not-found') throw e;
     registro = await auth.createUser({ email: u.email, password: u.senha, displayName: u.nome });
   }
-  await db.doc(`usuarios/${registro.uid}`).set({ nome: u.nome, perfil: u.perfil });
+  await db.doc(`usuarios/${registro.uid}`).set({
+    nome: u.nome,
+    email: u.email,
+    perfil: u.perfil,
+    ...(u.admin ? { admin: true } : {}),
+  }, { merge: true });
   console.log(`OK  ${u.email}  ->  ${u.perfil}  (${registro.uid})`);
 }

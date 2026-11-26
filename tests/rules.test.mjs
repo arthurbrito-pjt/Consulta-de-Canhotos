@@ -2,7 +2,7 @@
 import { readFileSync } from 'node:fs';
 import test, { before, after, beforeEach } from 'node:test';
 import { initializeTestEnvironment, assertFails, assertSucceeds } from '@firebase/rules-unit-testing';
-import { doc, getDoc, setDoc, updateDoc, deleteDoc, writeBatch, serverTimestamp, Timestamp } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, writeBatch, serverTimestamp, Timestamp } from 'firebase/firestore';
 
 let env;
 before(async () => {
@@ -19,6 +19,8 @@ beforeEach(async () => {
     await setDoc(doc(db, 'usuarios/rotas1'), { nome: 'R', perfil: 'rotas' });
     await setDoc(doc(db, 'usuarios/fiscal1'), { nome: 'F', perfil: 'fiscal' });
     await setDoc(doc(db, 'usuarios/invalido1'), { nome: 'X', perfil: 'admin' });
+    await setDoc(doc(db, 'usuarios/admin1'), { nome: 'A', email: 'a@x.com', perfil: 'rotas', admin: true });
+    await setDoc(doc(db, 'usuarios/inativo1'), { nome: 'I', email: 'i@x.com', perfil: 'rotas', ativo: false });
     await setDoc(doc(db, 'canhotos/c1'), { numeroNota: '1' });
     await setDoc(doc(db, 'canhotos_imagens/c1'), { imagemBase64: 'AAAA', mimeType: 'image/jpeg' });
   });
@@ -106,4 +108,63 @@ test('canhotos são imutáveis', async () => {
   await assertFails(updateDoc(doc(db, 'canhotos/c1'), { cliente: 'x' }));
   await assertFails(deleteDoc(doc(db, 'canhotos/c1')));
   await assertFails(deleteDoc(doc(db, 'canhotos_imagens/c1')));
+});
+
+// ---------- Módulo de usuários (admin) ----------
+const novoUsuario = (uid, extra = {}) => ({
+  nome: 'Novo', email: 'novo@x.com', perfil: 'fiscal', admin: false, ativo: true,
+  criadoEm: serverTimestamp(), criadoPor: uid, ...extra,
+});
+
+test('admin cria, lê e lista usuários', async () => {
+  const db = env.authenticatedContext('admin1').firestore();
+  await assertSucceeds(setDoc(doc(db, 'usuarios/u2'), novoUsuario('admin1')));
+  await assertSucceeds(setDoc(doc(db, 'usuarios/u3'), novoUsuario('admin1', { admin: true, perfil: 'comercial' })));
+  await assertSucceeds(getDoc(doc(db, 'usuarios/fiscal1')));
+  await assertSucceeds(getDocs(collection(db, 'usuarios')));
+});
+
+test('não-admin não cria, edita nem lista usuários', async () => {
+  for (const uid of ['rotas1', 'fiscal1']) {
+    const db = env.authenticatedContext(uid).firestore();
+    await assertFails(setDoc(doc(db, 'usuarios/u2'), novoUsuario(uid)));
+    await assertFails(updateDoc(doc(db, 'usuarios/fiscal1'), { perfil: 'rotas' }));
+    await assertFails(getDocs(collection(db, 'usuarios')));
+  }
+});
+
+test('ninguém se promove: não-admin não grava admin:true no próprio doc', async () => {
+  const db = env.authenticatedContext('rotas1').firestore();
+  await assertFails(updateDoc(doc(db, 'usuarios/rotas1'), { admin: true }));
+  await assertFails(setDoc(doc(db, 'usuarios/rotas1'), { nome: 'R', email: 'r@x.com', perfil: 'rotas', admin: true }));
+});
+
+test('usuário desativado perde acesso aos dados, mas lê o próprio perfil', async () => {
+  const db = env.authenticatedContext('inativo1').firestore();
+  await assertFails(getDoc(doc(db, 'canhotos/c1')));
+  await assertFails(gravar(db, canhoto('inativo1')));
+  await assertSucceeds(getDoc(doc(db, 'usuarios/inativo1')));
+});
+
+test('admin edita outros (perfil, desativar) mas não a si mesmo', async () => {
+  const db = env.authenticatedContext('admin1').firestore();
+  await assertSucceeds(updateDoc(doc(db, 'usuarios/fiscal1'), { perfil: 'comercial' }));
+  await assertSucceeds(updateDoc(doc(db, 'usuarios/rotas1'), { ativo: false }));
+  await assertFails(updateDoc(doc(db, 'usuarios/admin1'), { admin: false }));
+  await assertFails(updateDoc(doc(db, 'usuarios/admin1'), { ativo: false }));
+  await assertSucceeds(updateDoc(doc(db, 'usuarios/admin1'), { nome: 'Admin Renomeado' }));
+});
+
+test('usuário de admin: dados inválidos e exclusão são rejeitados', async () => {
+  const db = env.authenticatedContext('admin1').firestore();
+  await assertFails(setDoc(doc(db, 'usuarios/u2'), novoUsuario('admin1', { perfil: 'admin' })));
+  await assertFails(setDoc(doc(db, 'usuarios/u2'), novoUsuario('admin1', { extra: 1 })));
+  await assertFails(setDoc(doc(db, 'usuarios/u2'), novoUsuario('admin1', { nome: '' })));
+  await assertFails(setDoc(doc(db, 'usuarios/u2'), novoUsuario('outro')));
+  await assertFails(deleteDoc(doc(db, 'usuarios/fiscal1')));
+});
+
+test('admin mantém acesso normal aos canhotos (é rotas)', async () => {
+  const db = env.authenticatedContext('admin1').firestore();
+  await assertSucceeds(gravar(db, canhoto('admin1'), imagem(), 'adm'));
 });

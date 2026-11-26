@@ -4,6 +4,7 @@ import { Layout } from './components/Layout';
 import { LoginPage } from './pages/LoginPage';
 import { ConsultaPage } from './pages/ConsultaPage';
 import { DigitalizacaoPage } from './pages/DigitalizacaoPage';
+import { UsuariosPage } from './pages/UsuariosPage';
 
 export default function App() {
   return (
@@ -18,6 +19,11 @@ export default function App() {
           {/* Somente Rotas */}
           <Route element={<ProtectedRoute perfis={['rotas']} />}>
             <Route path="/digitalizar" element={<DigitalizacaoPage />} />
+          </Route>
+
+          {/* Somente administradores */}
+          <Route element={<ProtectedRoute admin />}>
+            <Route path="/usuarios" element={<UsuariosPage />} />
           </Route>
         </Route>
       </Route>

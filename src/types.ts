@@ -13,6 +13,16 @@ export function ehPerfil(valor: unknown): valor is Perfil {
   return typeof valor === 'string' && (PERFIS as readonly string[]).includes(valor);
 }
 
+/** Usuário do sistema (documento usuarios/{uid}). */
+export interface Usuario {
+  uid: string;
+  nome: string;
+  email?: string;
+  perfil: Perfil;
+  admin: boolean;
+  ativo: boolean;
+}
+
 export interface Canhoto {
   id: string;
   numeroNota: string;

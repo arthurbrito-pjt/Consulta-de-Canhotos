@@ -3,7 +3,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { PERFIL_ROTULO } from '../types';
 
 export function Layout() {
-  const { nome, perfil, sair } = useAuth();
+  const { nome, perfil, admin, sair } = useAuth();
   const { pathname } = useLocation();
 
   return (
@@ -26,6 +26,11 @@ export function Layout() {
           {perfil === 'rotas' && (
             <NavLink to="/digitalizar" className={({ isActive }) => (isActive ? 'aba ativa' : 'aba')}>
               Digitalizar
+            </NavLink>
+          )}
+          {admin && (
+            <NavLink to="/usuarios" className={({ isActive }) => (isActive ? 'aba ativa' : 'aba')}>
+              Usuários
             </NavLink>
           )}
         </nav>

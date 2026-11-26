@@ -51,6 +51,8 @@ Perfis ficam em `usuarios/{uid}` (`nome`, `perfil`). As rules **proíbem** escri
 
 **Opção B – manual**: Authentication → Adicionar usuário (e-mail/senha) → copie o UID → Firestore → coleção `usuarios` → documento com ID = UID e campos `nome` (string) e `perfil` (`rotas` | `fiscal` | `comercial` | `gestao_rotas`).
 
+**Administrador e módulo de usuários:** quem tem `admin: true` (boolean) no próprio documento `usuarios/{uid}` vê a aba **Usuários**, onde cria contas (e-mail + senha inicial + perfil), troca perfil, concede/remove admin, desativa/reativa e envia e-mail de redefinição de senha. O **primeiro admin** é definido à mão: Console → Firestore → `usuarios` → seu documento → adicionar campo `admin` (boolean) = `true`. A criação roda no navegador (sem Cloud Functions) usando uma segunda instância do Firebase Auth, e as rules só deixam admin gravar em `usuarios`. Desativar grava `ativo: false` (a conta do Auth continua, mas as rules negam todo acesso). Não há exclusão.
+
 Usuário autenticado sem documento em `usuarios` vê a tela "Acesso pendente" e as rules negam qualquer leitura.
 
 ## 3. IA (OCR) — Firebase AI Logic

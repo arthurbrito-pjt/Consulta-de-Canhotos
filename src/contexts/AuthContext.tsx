@@ -8,6 +8,8 @@ interface AuthState {
   user: User | null;
   nome: string | null;
   perfil: Perfil | null;
+  /** true para administradores (campo admin no perfil): acessam o módulo de usuários */
+  admin: boolean;
   /** true enquanto verifica sessão e carrega o perfil */
   carregando: boolean;
   /** preenchido quando o usuário autenticou mas não tem perfil válido */
@@ -22,6 +24,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [nome, setNome] = useState<string | null>(null);
   const [perfil, setPerfil] = useState<Perfil | null>(null);
+  const [admin, setAdmin] = useState(false);
   const [carregando, setCarregando] = useState(true);
   const [erroPerfil, setErroPerfil] = useState<string | null>(null);
 
@@ -33,22 +36,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setUser(null);
         setNome(null);
         setPerfil(null);
+        setAdmin(false);
         setCarregando(false);
         return;
       }
       try {
         const snap = await getDoc(doc(db, 'usuarios', u.uid));
         const dados = snap.data();
-        if (snap.exists() && ehPerfil(dados?.perfil)) {
+        if (snap.exists() && ehPerfil(dados?.perfil) && dados?.ativo === false) {
+          setNome(typeof dados?.nome === 'string' ? dados.nome : (u.email ?? ''));
+          setPerfil(null);
+          setAdmin(false);
+          setErroPerfil('Seu acesso foi desativado. Fale com o administrador.');
+        } else if (snap.exists() && ehPerfil(dados?.perfil)) {
           setNome(typeof dados?.nome === 'string' ? dados.nome : (u.email ?? ''));
           setPerfil(dados.perfil);
+          setAdmin(dados?.admin === true);
         } else {
           setNome(u.email);
           setPerfil(null);
+          setAdmin(false);
           setErroPerfil('Seu usuário ainda não tem um perfil de acesso. Fale com o administrador.');
         }
       } catch {
         setPerfil(null);
+        setAdmin(false);
         setErroPerfil('Não foi possível carregar seu perfil. Verifique a conexão e tente novamente.');
       }
       setUser(u);
@@ -61,6 +73,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       user,
       nome,
       perfil,
+      admin,
       carregando,
       erroPerfil,
       entrar: async (email, senha) => {
@@ -68,7 +81,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       },
       sair: () => signOut(auth),
     }),
-    [user, nome, perfil, carregando, erroPerfil],
+    [user, nome, perfil, admin, carregando, erroPerfil],
   );
 
   return <AuthContext.Provider value={valor}>{children}</AuthContext.Provider>;
