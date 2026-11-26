@@ -11,7 +11,7 @@ import type { Caixa, CanhotoLido, CampoCanhoto } from '../types';
  */
 // A cota gratuita é por modelo (20/dia no Free Tier): se um estourar ou estiver sobrecarregado, tenta o próximo.
 // O 2.5-flash foi aposentado para projetos novos.
-const MODELOS = ['gemini-3.8-flash', 'gemini-3.5-flash', 'gemini-3.5-flash-lite'];
+const MODELOS = ['gemini-3.8-flash', 'gemini-3.5-flash-lite', 'gemini-3.5-flash'];
 const MAX_CANHOTOS = 20;
 
 const PROMPT = `Você lê fotos de CANHOTOS de notas fiscais brasileiras (DANFE/NF-e) entregues e recebidos.
@@ -57,7 +57,8 @@ const generationConfig = {
       },
     }),
 };
-const modelos = MODELOS.map((model) => getGenerativeModel(ai, { model, generationConfig }));
+// Alguns modelos travam sem responder: limite de tempo por tentativa para poder passar ao próximo.
+const modelos = MODELOS.map((model) => getGenerativeModel(ai, { model, generationConfig }, { timeout: 35_000 }));
 
 function textoOuNull(v: unknown, max: number): string | null {
   if (typeof v !== 'string') return null;
@@ -105,7 +106,7 @@ export async function lerCanhotos(imagem: { base64: string; mimeType: string }):
       } catch (e) {
         ultimoErro = e;
         // Cota estourada, sobrecarga ou modelo indisponível: passa para o próximo modelo.
-        if (!/(429|500|503|404)|quota|RESOURCE_EXHAUSTED|high demand|overloaded|not found/i.test(String((e as Error).message))) throw e;
+        if (!/(429|500|503|404)|timeout|timed out|abort|network|fetch|quota|RESOURCE_EXHAUSTED|high demand|overloaded|not found/i.test(String((e as Error).message))) throw e;
       }
     }
     if (!resposta) throw ultimoErro;
