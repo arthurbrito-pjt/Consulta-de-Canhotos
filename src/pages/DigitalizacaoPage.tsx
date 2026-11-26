@@ -27,15 +27,14 @@ interface Formulario {
 interface Item {
   chave: number;
   form: Formulario;
-  imagem: ImagemComprimida;
-  /** true = recorte do canhoto; false = foto inteira (a IA não localizou a tira). */
-  recortada: boolean;
 }
 
 export function DigitalizacaoPage() {
   const { user } = useAuth();
   const [etapa, setEtapa] = useState<Etapa>('inicio');
   const [itens, setItens] = useState<Item[]>([]);
+  /** Foto inteira: guardada em cada canhoto (as caixas da IA são imprecisas demais para recortar). */
+  const [foto, setFoto] = useState<ImagemComprimida | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [erroForm, setErroForm] = useState<string | null>(null);
   const [mostrarErros, setMostrarErros] = useState(false);
@@ -46,6 +45,7 @@ export function DigitalizacaoPage() {
   function reiniciar() {
     setEtapa('inicio');
     setItens([]);
+    setFoto(null);
     setErro(null);
     setErroForm(null);
     setMostrarErros(false);
@@ -69,24 +69,19 @@ export function DigitalizacaoPage() {
           setEtapa('falha');
           return;
         }
-        let inteira: ImagemComprimida | null = null; // só se a IA não localizar alguma tira
-        const novos: Item[] = lidos.map((l, i) => {
-          let imagem: ImagemComprimida | null = null;
-          if (l.caixa) imagem = imagemParaArmazenar(fonte, l.caixa);
-          if (!imagem) imagem = inteira ??= imagemParaArmazenar(fonte);
-          return {
-            chave: i,
-            recortada: l.caixa !== null,
-            imagem,
-            form: {
-              numeroNota: l.campos.numeroNota ?? '',
-              cliente: l.campos.cliente ?? '',
-              dataAssinatura: l.campos.dataAssinatura ?? '',
-              assinadoPor: l.campos.assinadoPor ?? '',
-              observacao: l.campos.observacao ?? '',
-            },
-          };
-        });
+        // Cada canhoto guarda a foto inteira; o lote (10 MiB) limita o tamanho de cada cópia.
+        const inteira = imagemParaArmazenar(fonte, null, Math.floor(8_000_000 / lidos.length));
+        const novos: Item[] = lidos.map((l, i) => ({
+          chave: i,
+          form: {
+            numeroNota: l.campos.numeroNota ?? '',
+            cliente: l.campos.cliente ?? '',
+            dataAssinatura: l.campos.dataAssinatura ?? '',
+            assinadoPor: l.campos.assinadoPor ?? '',
+            observacao: l.campos.observacao ?? '',
+          },
+        }));
+        setFoto(inteira);
         setItens(novos);
         setEtapa('conferencia');
       } finally {
@@ -130,7 +125,7 @@ export function DigitalizacaoPage() {
 
   async function confirmar(e: FormEvent) {
     e.preventDefault();
-    if (!user) return;
+    if (!user || !foto) return;
     if (itens.some((i) => problema(i))) {
       setMostrarErros(true);
       setErroForm('Corrija os canhotos destacados antes de salvar (ou remova os que não quer guardar).');
@@ -143,7 +138,7 @@ export function DigitalizacaoPage() {
       await salvarCanhotos(
         itens.map((i) => ({
           dados: i.form,
-          imagem: { imagemBase64: i.imagem.base64, mimeType: i.imagem.mimeType },
+          imagem: { imagemBase64: foto.base64, mimeType: foto.mimeType },
         })),
         user.uid,
       );
@@ -185,7 +180,8 @@ export function DigitalizacaoPage() {
     return (
       <form className="cartao" onSubmit={confirmar}>
         <h2>{itens.length === 1 ? 'Confira o canhoto lido' : `Confira os ${itens.length} canhotos lidos`}</h2>
-        <p className="muted">Corrija o que for preciso. Nada é salvo até você confirmar.</p>
+        <p className="muted">Corrija o que for preciso. Nada é salvo até você confirmar. A foto inteira fica anexada a cada canhoto.</p>
+        {foto && <img className="foto foto-previa" src={foto.dataUrl} alt="Foto dos canhotos" />}
 
         {itens.some((i) => !i.form.dataAssinatura) && itens.length > 1 && (
           <label className="campo">
@@ -206,13 +202,6 @@ export function DigitalizacaoPage() {
                 Canhoto {idx + 1}
                 {item.form.numeroNota ? ` · NF ${normalizarNota(item.form.numeroNota)}` : ''}
               </legend>
-              <img
-                className="foto foto-previa"
-                src={item.imagem.dataUrl}
-                alt={item.recortada ? `Recorte do canhoto ${idx + 1}` : 'Foto inteira (canhoto não localizado)'}
-              />
-              {!item.recortada && <p className="muted">Não foi possível recortar este canhoto: será salva a foto inteira.</p>}
-
               <label className="campo">
                 <span>{CAMPO_ROTULO.numeroNota} *</span>
                 <input inputMode="numeric" {...campo('numeroNota')} />
