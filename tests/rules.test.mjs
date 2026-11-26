@@ -199,3 +199,27 @@ test('substituição: não troca NF/cliente/autor, nem sem carimbo, nem por não
   const f = env.authenticatedContext('fiscal1').firestore();
   await assertFails(substituir(f, 'dup', {}, imagem(), 'fiscal1'));
 });
+
+// ---------- Foto do verso ----------
+test('verso: criado junto com o canhoto; avulso e por não-rotas falham', async () => {
+  const db = env.authenticatedContext('rotas1').firestore();
+  const b = writeBatch(db);
+  b.set(doc(db, 'canhotos', 'v1'), canhoto('rotas1'));
+  b.set(doc(db, 'canhotos_imagens', 'v1'), imagem());
+  b.set(doc(db, 'canhotos_versos', 'v1'), imagem());
+  await assertSucceeds(b.commit());
+  await assertFails(setDoc(doc(db, 'canhotos_versos/orfao'), imagem()));
+  await assertSucceeds(getDoc(doc(env.authenticatedContext('fiscal1').firestore(), 'canhotos_versos/v1')));
+  await assertFails(deleteDoc(doc(db, 'canhotos_versos/v1')));
+  await assertFails(updateDoc(doc(db, 'canhotos_versos/v1'), { imagemBase64: 'ZZZZ' }));
+  await assertFails(setDoc(doc(env.authenticatedContext('fiscal1').firestore(), 'canhotos_versos/f1'), imagem()));
+});
+
+test('verso: substituição do canhoto pode trocar/criar o verso', async () => {
+  const db = env.authenticatedContext('rotas1').firestore();
+  await assertSucceeds(gravar(db, canhoto('rotas1'), imagem(), 'dup'));
+  const b = writeBatch(db);
+  b.update(doc(db, 'canhotos', 'dup'), { dataAssinatura: Timestamp.fromDate(new Date(2025, 0, 2)), atualizadoPor: 'rotas1', atualizadoEm: serverTimestamp() });
+  b.set(doc(db, 'canhotos_versos', 'dup'), imagem({ imagemBase64: 'VVVV' }));
+  await assertSucceeds(b.commit());
+});

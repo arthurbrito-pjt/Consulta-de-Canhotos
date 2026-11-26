@@ -31,6 +31,8 @@ interface Item {
   imagem: ImagemComprimida;
   /** true = recorte da tira do canhoto; false = foto inteira. */
   recortada: boolean;
+  /** Foto opcional do verso do canhoto (só imagem, sem leitura por IA). */
+  verso?: ImagemComprimida;
 }
 
 interface Duplicado {
@@ -52,6 +54,38 @@ export function DigitalizacaoPage() {
   const [duplicados, setDuplicados] = useState<Duplicado[] | null>(null);
   const camera = useRef<HTMLInputElement>(null);
   const galeria = useRef<HTMLInputElement>(null);
+  const cameraVerso = useRef<HTMLInputElement>(null);
+  const versoDe = useRef<number | null>(null);
+  const [erroVerso, setErroVerso] = useState<string | null>(null);
+
+  function pedirVerso(chave: number) {
+    versoDe.current = chave;
+    setErroVerso(null);
+    cameraVerso.current?.click();
+  }
+
+  async function aoEscolherVerso(e: ChangeEvent<HTMLInputElement>) {
+    const arquivo = e.target.files?.[0];
+    e.target.value = '';
+    const chave = versoDe.current;
+    if (!arquivo || chave === null) return;
+    try {
+      const fonte = await abrirImagem(arquivo);
+      try {
+        // 3 MB no total para versos, divididos entre os canhotos do lote (o commit aceita 10 MiB)
+        const verso = imagemParaArmazenar(fonte, null, Math.floor(3_000_000 / Math.max(1, itens.length)));
+        setItens((lista) => lista.map((i) => (i.chave === chave ? { ...i, verso } : i)));
+      } finally {
+        liberarImagem(fonte);
+      }
+    } catch (err) {
+      setErroVerso(err instanceof Error ? err.message : 'Não foi possível usar a foto do verso.');
+    }
+  }
+
+  function removerVerso(chave: number) {
+    setItens((lista) => lista.map((i) => (i.chave === chave ? { ...i, verso: undefined } : i)));
+  }
 
   function reiniciar() {
     setEtapa('inicio');
@@ -88,7 +122,7 @@ export function DigitalizacaoPage() {
             ? await localizarQuadros(leituraImg, lidos.map((l) => l.campos.numeroNota))
             : lidos.map(() => null);
         const faixas = calcularFaixas(quadros);
-        const limite = Math.floor(8_000_000 / lidos.length);
+        const limite = Math.floor(6_000_000 / lidos.length);
         let inteira: ImagemComprimida | null = null;
         const novos: Item[] = lidos.map((l, i) => ({
           chave: i,
@@ -188,6 +222,7 @@ export function DigitalizacaoPage() {
           {
             dados: i.form,
             imagem: { imagemBase64: i.imagem.base64, mimeType: i.imagem.mimeType },
+            verso: i.verso ? { imagemBase64: i.verso.base64, mimeType: i.verso.mimeType } : undefined,
             substituirId: dup?.existente.id,
           },
         ];
@@ -234,6 +269,7 @@ export function DigitalizacaoPage() {
     const hoje = new Date().toISOString().slice(0, 10);
     return (
       <form className="cartao" onSubmit={confirmar}>
+        <input ref={cameraVerso} type="file" accept="image/*" capture="environment" hidden onChange={aoEscolherVerso} />
         <h2>{itens.length === 1 ? 'Confira o canhoto lido' : `Confira os ${itens.length} canhotos lidos`}</h2>
         <p className="muted">Corrija o que for preciso. Nada é salvo até você confirmar.</p>
 
@@ -285,6 +321,25 @@ export function DigitalizacaoPage() {
                 <span>{CAMPO_ROTULO.observacao}</span>
                 <textarea rows={2} {...campo('observacao')} />
               </label>
+              <div className="verso">
+                {item.verso ? (
+                  <>
+                    <img className="foto foto-previa" src={item.verso.dataUrl} alt={`Verso do canhoto ${idx + 1}`} />
+                    <div className="botoes-linha">
+                      <button type="button" className="btn-pequeno" disabled={salvando} onClick={() => pedirVerso(item.chave)}>
+                        Tirar outra foto do verso
+                      </button>
+                      <button type="button" className="btn-pequeno perigo" disabled={salvando} onClick={() => removerVerso(item.chave)}>
+                        Remover foto do verso
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <button type="button" className="btn btn-secundario" disabled={salvando} onClick={() => pedirVerso(item.chave)}>
+                    📷 Tirar foto do verso / observação
+                  </button>
+                )}
+              </div>
 
               {msg && <Erro>{msg}</Erro>}
               <button type="button" className="btn btn-secundario" disabled={salvando} onClick={() => remover(item.chave)}>
@@ -294,6 +349,7 @@ export function DigitalizacaoPage() {
           );
         })}
 
+        {erroVerso && <Erro>{erroVerso}</Erro>}
         {erroForm && <Erro>{erroForm}</Erro>}
 
         <div className="acoes">

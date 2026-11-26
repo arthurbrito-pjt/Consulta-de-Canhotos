@@ -86,6 +86,14 @@ export async function buscarRecentes(): Promise<Canhoto[]> {
   return (await getDocs(q)).docs.map(paraCanhoto);
 }
 
+/** Foto do verso (opcional) do canhoto. */
+export async function obterVerso(id: string): Promise<CanhotoImagem | null> {
+  const snap = await getDoc(doc(db, 'canhotos_versos', id));
+  if (!snap.exists()) return null;
+  const d = snap.data();
+  return { imagemBase64: d.imagemBase64, mimeType: d.mimeType };
+}
+
 /** Carrega a foto só quando o usuário abre os detalhes. */
 export async function obterImagem(id: string): Promise<CanhotoImagem | null> {
   const snap = await getDoc(doc(db, 'canhotos_imagens', id));
@@ -115,7 +123,7 @@ export async function encontrarDuplicados(
  * Limite de 20 por lote (cada imagem pode ter até ~700 KB e o commit aceita 10 MiB).
  */
 export async function salvarCanhotos(
-  itens: { dados: NovoCanhoto; imagem: CanhotoImagem; /** id de um canhoto existente a substituir */ substituirId?: string }[],
+  itens: { dados: NovoCanhoto; imagem: CanhotoImagem; /** foto do verso (opcional) */ verso?: CanhotoImagem; /** id de um canhoto existente a substituir */ substituirId?: string }[],
   uid: string,
 ): Promise<string[]> {
   if (itens.length === 0) throw new Error('Nenhum canhoto para salvar.');
@@ -123,7 +131,7 @@ export async function salvarCanhotos(
 
   const batch = writeBatch(db);
   const ids: string[] = [];
-  for (const { dados, imagem, substituirId } of itens) {
+  for (const { dados, imagem, verso, substituirId } of itens) {
     const data = dataDeISO(dados.dataAssinatura);
     if (!data) throw new Error('Data de assinatura inválida.');
     const nota = normalizarNota(dados.numeroNota);
@@ -143,6 +151,7 @@ export async function salvarCanhotos(
         imagemBase64: imagem.imagemBase64,
         mimeType: imagem.mimeType,
       });
+      if (verso) batch.set(doc(db, 'canhotos_versos', substituirId), { imagemBase64: verso.imagemBase64, mimeType: verso.mimeType });
       ids.push(substituirId);
       continue;
     }
@@ -166,6 +175,7 @@ export async function salvarCanhotos(
       imagemBase64: imagem.imagemBase64,
       mimeType: imagem.mimeType,
     });
+    if (verso) batch.set(doc(db, 'canhotos_versos', ref.id), { imagemBase64: verso.imagemBase64, mimeType: verso.mimeType });
     ids.push(ref.id);
   }
   await batch.commit();

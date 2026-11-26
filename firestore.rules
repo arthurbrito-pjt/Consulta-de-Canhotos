@@ -96,6 +96,7 @@ service cloud.firestore {
     }
 
     // ---------- Coleções ----------
+    // (canhotos_versos: foto opcional do verso/observação do canhoto, mesmas regras da imagem)
 
     // Cada usuário lê o próprio perfil (mesmo desativado, para o app avisar). Admin lista, cria e edita.
     // Não há exclusão: usuários são desativados (ativo: false).
@@ -117,6 +118,17 @@ service cloud.firestore {
 
     // Imagem em base64 (separada para não pesar nas listagens).
     // Só pode ser criada junto com o canhoto (mesmo batch) e abaixo de ~900 KB.
+    match /canhotos_versos/{id} {
+      allow read: if temPerfil();
+      allow create: if ehRotas()
+        && imagemValida()
+        && existsAfter(/databases/$(database)/documents/canhotos/$(id));
+      allow update: if ehRotas()
+        && imagemValida()
+        && getAfter(/databases/$(database)/documents/canhotos/$(id)).data.get('atualizadoEm', null) == request.time;
+      allow delete: if false;
+    }
+
     match /canhotos_imagens/{id} {
       allow read: if temPerfil();
       allow create: if ehRotas()
