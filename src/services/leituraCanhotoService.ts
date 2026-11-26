@@ -147,8 +147,8 @@ export async function lerCanhotos(imagem: { base64: string; mimeType: string }):
   });
 }
 
-const PROMPT_LOCALIZAR = `Esta foto tem vários canhotos de NF-e (tiras empilhadas). Cada tira tem à direita um quadro retangular com borda preta "NF-e Nº000.xxx.xxx SÉRIE 1".
-Detecte cada quadro retangular desses, de cima para baixo. Retorne o número da NF (só dígitos) e box_2d [ymin, xmin, ymax, xmax] de 0 a 1000 do quadro inteiro. Seja preciso.`;
+const PROMPT_LOCALIZAR = `Esta foto tem vários canhotos de NF-e (tiras de papel, empilhadas ou em pé lado a lado, em qualquer orientação). Cada tira tem um quadro retangular com borda preta "NF-e Nº000.xxx.xxx SÉRIE 1" em uma das pontas.
+Detecte cada quadro retangular desses, na ordem em que aparecem na foto. Retorne o número da NF (só dígitos) e box_2d [ymin, xmin, ymax, xmax] de 0 a 1000 do quadro inteiro. Seja preciso.`;
 
 const modelosLocalizar = modelosPara({
   temperature: 0,
