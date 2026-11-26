@@ -8,7 +8,7 @@ import type { CampoCanhoto, CampoObrigatorio, LeituraCanhotoResultado } from '..
  * Leitura por IA via Firebase AI Logic (Gemini Developer API).
  * A chave do Gemini fica no Firebase (nunca no bundle) e o plano Spark basta.
  */
-const MODELO = 'gemini-2.5-flash';
+const MODELO = 'gemini-3.8-flash'; // o 2.5-flash foi aposentado para projetos novos
 
 const CAMPOS: CampoCanhoto[] = ['numeroNota', 'cliente', 'dataAssinatura', 'assinadoPor', 'observacao'];
 const OBRIGATORIOS: CampoObrigatorio[] = ['numeroNota', 'cliente', 'dataAssinatura'];
@@ -62,10 +62,19 @@ export async function lerCanhoto(imagem: {
 }): Promise<LeituraCanhotoResultado> {
   let bruto: Record<string, unknown>;
   try {
-    const resposta = await modelo.generateContent([
-      PROMPT,
-      { inlineData: { data: imagem.base64, mimeType: imagem.mimeType } },
-    ]);
+    const conteudo = [PROMPT, { inlineData: { data: imagem.base64, mimeType: imagem.mimeType } }];
+    let resposta;
+    for (let tentativa = 0; ; tentativa++) {
+      try {
+        resposta = await modelo.generateContent(conteudo);
+        break;
+      } catch (e) {
+        // Picos de demanda (HTTP 500/503) são temporários: tenta de novo até 2 vezes.
+        const sobrecarga = /(500|503)|high demand|overloaded/i.test(String((e as Error).message));
+        if (!sobrecarga || tentativa >= 2) throw e;
+        await new Promise((r) => setTimeout(r, 1500 * (tentativa + 1)));
+      }
+    }
     bruto = JSON.parse(resposta.response.text()) as Record<string, unknown>;
   } catch (err) {
     console.error('Falha na leitura por IA', err);

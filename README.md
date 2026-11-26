@@ -58,7 +58,7 @@ Usuário autenticado sem documento em `usuarios` vê a tela "Acesso pendente" e 
 - Usa **Gemini** (`gemini-2.5-flash`, constante `MODELO` em `src/services/leituraCanhotoService.ts`) pelo SDK `firebase/ai`, sem Cloud Functions e sem Blaze. A chave do Gemini fica no Firebase, nunca no bundle.
 - Habilite uma vez: Console → **Build → AI Logic → Começar** → escolha **Gemini Developer API** (cria a chave e habilita as APIs).
 - A resposta é JSON com schema; o que for ilegível volta `null`. O front valida (nº da NF só dígitos, data real e não futura) e `obrigatoriosFaltando` lista o que falhou.
-- Como a chamada parte do navegador, o **App Check** (reCAPTCHA v3) protege a cota: crie a chave de site em Console → App Check → Apps, coloque em `VITE_RECAPTCHA_SITE_KEY` e ative "Aplicar" para AI Logic. A chave precisa listar os domínios `consulta-de-canhotos.web.app` e `localhost`. Em `npm run dev` o SDK imprime um *debug token* no console: cadastre-o em App Check → Gerenciar tokens de debug. Defina também um limite de gasto/cota no Google AI Studio.
+- Como a chamada parte do navegador, o **App Check** (reCAPTCHA Enterprise) protege a cota: crie a chave de site em Console → App Check → Apps, coloque em `VITE_RECAPTCHA_SITE_KEY` e ative "Aplicar" para AI Logic. A chave precisa listar os domínios `consulta-de-canhotos.web.app` e `localhost`. Em `npm run dev` o SDK imprime um *debug token* no console: cadastre-o em App Check → Gerenciar tokens de debug. Defina também um limite de gasto/cota no Google AI Studio.
 
 ## 4. Rodar localmente
 
