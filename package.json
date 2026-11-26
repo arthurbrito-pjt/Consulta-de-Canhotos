@@ -1,0 +1,32 @@
+{
+  "name": "consulta-canhotos",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "emulators": "firebase emulators:start",
+    "test:rules": "firebase emulators:exec --only firestore --project demo-canhotos \"node --test tests/rules.test.mjs\"",
+    "seed": "node scripts/seed-usuarios.mjs",
+    "seed:emulador": "node scripts/seed-usuarios.mjs --emulador",
+    "deploy": "npm run build && firebase deploy"
+  },
+  "dependencies": {
+    "firebase": "^11.0.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.28.0"
+  },
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "^4.0.1",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "firebase-admin": "^13.0.0",
+    "firebase-tools": "^15.37.0",
+    "typescript": "~5.6.3",
+    "vite": "^6.0.0"
+  }
+}

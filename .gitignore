@@ -1,0 +1,12 @@
+node_modules
+dist
+lib
+.env
+.env.local
+.firebase
+*.log
+functions/.secret.local
+functions/.env.local
+scripts/usuarios.seed.json
+serviceAccountKey.json
+firestore-debug.log

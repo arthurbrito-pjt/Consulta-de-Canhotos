@@ -1,0 +1,77 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ---------- Funções auxiliares ----------
+    function logado() {
+      return request.auth != null;
+    }
+
+    function docUsuario(uid) {
+      return /databases/$(database)/documents/usuarios/$(uid);
+    }
+
+    // Usuário autenticado e com perfil válido cadastrado em /usuarios
+    function temPerfil() {
+      return logado()
+        && exists(docUsuario(request.auth.uid))
+        && get(docUsuario(request.auth.uid)).data.perfil in
+           ['rotas', 'fiscal', 'comercial', 'gestao_rotas'];
+    }
+
+    function ehRotas() {
+      return temPerfil()
+        && get(docUsuario(request.auth.uid)).data.perfil == 'rotas';
+    }
+
+    function textoOpcional(d, campo, max) {
+      return !(campo in d) || (d[campo] is string && d[campo].size() <= max);
+    }
+
+    function canhotoValido() {
+      let d = request.resource.data;
+      return d.keys().hasAll(['numeroNota', 'cliente', 'clienteBusca', 'dataAssinatura', 'criadoPor', 'criadoEm'])
+        && d.keys().hasOnly(['numeroNota', 'cliente', 'clienteBusca', 'dataAssinatura',
+                             'assinadoPor', 'observacao', 'criadoPor', 'criadoEm'])
+        && d.numeroNota is string && d.numeroNota.size() > 0 && d.numeroNota.size() <= 20
+        && d.cliente is string && d.cliente.size() > 0 && d.cliente.size() <= 200
+        && d.clienteBusca is string && d.clienteBusca.size() > 0 && d.clienteBusca.size() <= 200
+        && d.dataAssinatura is timestamp
+        && textoOpcional(d, 'assinadoPor', 200)
+        && textoOpcional(d, 'observacao', 1000)
+        && d.criadoPor == request.auth.uid
+        && d.criadoEm == request.time;
+    }
+
+    // ---------- Coleções ----------
+
+    // Cada usuário lê apenas o próprio perfil. Ninguém escreve pelo cliente:
+    // perfis são gerenciados pelo Console/Admin SDK (scripts/seed-usuarios.mjs).
+    match /usuarios/{uid} {
+      allow get: if logado() && request.auth.uid == uid;
+      allow list, create, update, delete: if false;
+    }
+
+    // Todos os perfis consultam; só "rotas" insere; registros são imutáveis.
+    match /canhotos/{id} {
+      allow read: if temPerfil();
+      allow create: if ehRotas() && canhotoValido();
+      allow update, delete: if false;
+    }
+
+    // Imagem em base64 (separada para não pesar nas listagens).
+    // Só pode ser criada junto com o canhoto (mesmo batch) e abaixo de ~900 KB.
+    match /canhotos_imagens/{id} {
+      allow read: if temPerfil();
+      allow create: if ehRotas()
+        && request.resource.data.keys().hasOnly(['imagemBase64', 'mimeType'])
+        && request.resource.data.imagemBase64 is string
+        && request.resource.data.imagemBase64.size() > 0
+        && request.resource.data.imagemBase64.size() <= 900000
+        && request.resource.data.mimeType in ['image/jpeg', 'image/png']
+        && existsAfter(/databases/$(database)/documents/canhotos/$(id));
+      allow update, delete: if false;
+    }
+  }
+}

@@ -1,0 +1,6 @@
+[
+  { "email": "rotas@suaempresa.com.br", "senha": "TroqueEstaSenha#1", "nome": "Fulano (Rotas)", "perfil": "rotas" },
+  { "email": "fiscal@suaempresa.com.br", "senha": "TroqueEstaSenha#2", "nome": "Ciclana (Fiscal)", "perfil": "fiscal" },
+  { "email": "comercial@suaempresa.com.br", "senha": "TroqueEstaSenha#3", "nome": "Beltrano (Comercial)", "perfil": "comercial" },
+  { "email": "gestao@suaempresa.com.br", "senha": "TroqueEstaSenha#4", "nome": "Gestor (Gestão de Rotas)", "perfil": "gestao_rotas" }
+]

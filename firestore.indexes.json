@@ -1,0 +1,13 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "canhotos",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "numeroNota", "order": "ASCENDING" },
+        { "fieldPath": "dataAssinatura", "order": "DESCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}
