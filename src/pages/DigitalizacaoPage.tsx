@@ -122,7 +122,10 @@ export function DigitalizacaoPage() {
   }
 
   function dataParaTodos(valor: string) {
-    setItens((lista) => lista.map((i) => ({ ...i, form: { ...i.form, dataAssinatura: valor } })));
+    // Só preenche quem ficou sem data: o que a IA leu com segurança é mantido.
+    setItens((lista) =>
+      lista.map((i) => (i.form.dataAssinatura ? i : { ...i, form: { ...i.form, dataAssinatura: valor } })),
+    );
   }
 
   async function confirmar(e: FormEvent) {
@@ -184,9 +187,9 @@ export function DigitalizacaoPage() {
         <h2>{itens.length === 1 ? 'Confira o canhoto lido' : `Confira os ${itens.length} canhotos lidos`}</h2>
         <p className="muted">Corrija o que for preciso. Nada é salvo até você confirmar.</p>
 
-        {itens.length > 1 && (
+        {itens.some((i) => !i.form.dataAssinatura) && itens.length > 1 && (
           <label className="campo">
-            <span>Mesma data de assinatura para todos (opcional)</span>
+            <span>Data de assinatura para os canhotos que ficaram sem data</span>
             <input type="date" max={hoje} defaultValue="" onChange={(e) => dataParaTodos(e.target.value)} />
           </label>
         )}

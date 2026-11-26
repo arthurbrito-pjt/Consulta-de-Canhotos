@@ -9,7 +9,9 @@ import type { Caixa, CanhotoLido, CampoCanhoto } from '../types';
  * A chave do Gemini fica no Firebase (nunca no bundle) e o plano Spark basta.
  * Uma foto pode conter VÁRIOS canhotos (tiras grampeadas): a IA devolve uma lista.
  */
-const MODELO = 'gemini-3.8-flash'; // o 2.5-flash foi aposentado para projetos novos
+// A cota gratuita é por modelo (20/dia no Free Tier): se um estourar ou estiver sobrecarregado, tenta o próximo.
+// O 2.5-flash foi aposentado para projetos novos.
+const MODELOS = ['gemini-3.8-flash', 'gemini-3.5-flash', 'gemini-3.5-flash-lite'];
 const MAX_CANHOTOS = 20;
 
 const PROMPT = `Você lê fotos de CANHOTOS de notas fiscais brasileiras (DANFE/NF-e) entregues e recebidos.
@@ -33,9 +35,8 @@ Campos de cada canhoto:
 - observacao: anotações escritas no canhoto (ex.: "recebido com avaria"), apenas se existirem; senão null.
 - caixa: [ymin, xmin, ymax, xmax], coordenadas de 0 a 1000 relativas à imagem inteira, envolvendo TODA a tira desse canhoto (do texto "RECEBEMOS" até o quadro da NF-e, incluindo o campo de data e o de assinatura).`;
 
-const modelo = getGenerativeModel(getAI(app, { backend: new GoogleAIBackend() }), {
-  model: MODELO,
-  generationConfig: {
+const ai = getAI(app, { backend: new GoogleAIBackend() });
+const generationConfig = {
     temperature: 0,
     responseMimeType: 'application/json',
     responseSchema: Schema.object({
@@ -55,8 +56,8 @@ const modelo = getGenerativeModel(getAI(app, { backend: new GoogleAIBackend() })
         }),
       },
     }),
-  },
-});
+};
+const modelos = MODELOS.map((model) => getGenerativeModel(ai, { model, generationConfig }));
 
 function textoOuNull(v: unknown, max: number): string | null {
   if (typeof v !== 'string') return null;
@@ -86,17 +87,28 @@ export async function lerCanhotos(imagem: { base64: string; mimeType: string }):
   try {
     const conteudo = [PROMPT, { inlineData: { data: imagem.base64, mimeType: imagem.mimeType } }];
     let resposta;
-    for (let tentativa = 0; ; tentativa++) {
+    let ultimoErro: unknown;
+    for (const modelo of modelos) {
       try {
-        resposta = await modelo.generateContent(conteudo);
+        // Picos de demanda (500/503) são temporários: 1 nova tentativa no mesmo modelo.
+        for (let tentativa = 0; ; tentativa++) {
+          try {
+            resposta = await modelo.generateContent(conteudo);
+            break;
+          } catch (e) {
+            const sobrecarga = /(500|503)|high demand|overloaded/i.test(String((e as Error).message));
+            if (!sobrecarga || tentativa >= 1) throw e;
+            await new Promise((r) => setTimeout(r, 1500));
+          }
+        }
         break;
       } catch (e) {
-        // Picos de demanda (HTTP 500/503) são temporários: tenta de novo até 2 vezes.
-        const sobrecarga = /(500|503)|high demand|overloaded/i.test(String((e as Error).message));
-        if (!sobrecarga || tentativa >= 2) throw e;
-        await new Promise((r) => setTimeout(r, 1500 * (tentativa + 1)));
+        ultimoErro = e;
+        // Cota estourada, sobrecarga ou modelo indisponível: passa para o próximo modelo.
+        if (!/(429|500|503|404)|quota|RESOURCE_EXHAUSTED|high demand|overloaded|not found/i.test(String((e as Error).message))) throw e;
       }
     }
+    if (!resposta) throw ultimoErro;
     bruto = JSON.parse(resposta.response.text()) as { canhotos?: unknown };
   } catch (err) {
     console.error('Falha na leitura por IA', err);
