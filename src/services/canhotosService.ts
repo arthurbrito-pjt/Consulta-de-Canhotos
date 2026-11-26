@@ -18,7 +18,7 @@ import { dataDeISO, fimDoDia, inicioDoDia } from '../lib/datas';
 import { normalizarBusca, normalizarNota } from '../lib/texto';
 import type { Canhoto, CanhotoImagem, NovoCanhoto } from '../types';
 
-const LIMITE_RESULTADOS = 50;
+export const LIMITE_RESULTADOS = 50;
 const canhotosRef = collection(db, 'canhotos');
 
 function paraCanhoto(snap: QueryDocumentSnapshot<DocumentData>): Canhoto {
@@ -76,6 +76,12 @@ export async function buscarPorData(iso: string): Promise<Canhoto[]> {
     orderBy('dataAssinatura', 'desc'),
     limit(LIMITE_RESULTADOS),
   );
+  return (await getDocs(q)).docs.map(paraCanhoto);
+}
+
+/** Últimos canhotos digitalizados (tela inicial da consulta). Índice de campo único (automático). */
+export async function buscarRecentes(): Promise<Canhoto[]> {
+  const q = query(canhotosRef, orderBy('criadoEm', 'desc'), limit(20));
   return (await getDocs(q)).docs.map(paraCanhoto);
 }
 

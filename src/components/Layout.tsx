@@ -1,9 +1,10 @@
-import { NavLink, Outlet } from 'react-router-dom';
+import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { PERFIL_ROTULO } from '../types';
 
 export function Layout() {
   const { nome, perfil, sair } = useAuth();
+  const { pathname } = useLocation();
 
   return (
     <div className="app">
@@ -29,7 +30,7 @@ export function Layout() {
           )}
         </nav>
       </header>
-      <main className="conteudo">
+      <main className={pathname.startsWith("/consulta") ? "conteudo larga" : "conteudo"}>
         <Outlet />
       </main>
     </div>

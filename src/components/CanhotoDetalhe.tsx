@@ -10,13 +10,24 @@ type EstadoImagem =
   | { tipo: 'ausente' }
   | { tipo: 'erro'; mensagem: string };
 
-export function CanhotoDetalhe({ canhoto, onFechar }: { canhoto: Canhoto; onFechar: () => void }) {
+interface Props {
+  canhoto: Canhoto;
+  posicao: number;
+  total: number;
+  onFechar: () => void;
+  onAnterior?: () => void;
+  onProximo?: () => void;
+}
+
+export function CanhotoDetalhe({ canhoto, posicao, total, onFechar, onAnterior, onProximo }: Props) {
   const [estado, setEstado] = useState<EstadoImagem>({ tipo: 'carregando' });
   const [ampliada, setAmpliada] = useState(false);
+  const [copiado, setCopiado] = useState(false);
 
   useEffect(() => {
     let cancelado = false;
     setEstado({ tipo: 'carregando' });
+    setAmpliada(false);
     obterImagem(canhoto.id)
       .then((imagem) => {
         if (!cancelado) setEstado(imagem ? { tipo: 'ok', imagem } : { tipo: 'ausente' });
@@ -29,54 +40,112 @@ export function CanhotoDetalhe({ canhoto, onFechar }: { canhoto: Canhoto; onFech
     };
   }, [canhoto.id]);
 
+  // Esc fecha (primeiro o zoom); setas navegam entre os resultados.
+  useEffect(() => {
+    function aoTeclar(e: KeyboardEvent) {
+      const emCampo = (e.target as HTMLElement | null)?.closest('input, textarea, select');
+      if (e.key === 'Escape') {
+        if (ampliada) setAmpliada(false);
+        else onFechar();
+      } else if (!emCampo && e.key === 'ArrowLeft') onAnterior?.();
+      else if (!emCampo && e.key === 'ArrowRight') onProximo?.();
+    }
+    window.addEventListener('keydown', aoTeclar);
+    return () => window.removeEventListener('keydown', aoTeclar);
+  }, [ampliada, onFechar, onAnterior, onProximo]);
+
+  const dataUrl =
+    estado.tipo === 'ok' ? `data:${estado.imagem.mimeType};base64,${estado.imagem.imagemBase64}` : null;
+
+  async function copiarNota() {
+    try {
+      await navigator.clipboard.writeText(canhoto.numeroNota);
+      setCopiado(true);
+      setTimeout(() => setCopiado(false), 1500);
+    } catch {
+      // sem permissão de área de transferência: ignora
+    }
+  }
+
   return (
-    <section className="cartao detalhe" aria-label={`Detalhes da NF ${canhoto.numeroNota}`}>
-      <div className="detalhe-topo">
-        <h2>NF {canhoto.numeroNota}</h2>
-        <button type="button" className="btn btn-link" onClick={onFechar}>
-          Fechar
+    <aside className="detalhe" aria-label={`Detalhes da NF ${canhoto.numeroNota}`}>
+      <header className="detalhe-topo">
+        <button type="button" className="icone-btn" onClick={onFechar} aria-label="Voltar para a lista">
+          <span aria-hidden="true">←</span>
         </button>
+        <div className="detalhe-titulo">
+          <span className="rotulo">Nota Fiscal</span>
+          <h2>{canhoto.numeroNota}</h2>
+        </div>
+        <button type="button" className="btn-pequeno" onClick={() => void copiarNota()}>
+          {copiado ? 'Copiado ✓' : 'Copiar nº'}
+        </button>
+      </header>
+
+      <div className="detalhe-corpo">
+        <div className="detalhe-foto">
+          {estado.tipo === 'carregando' && <Carregando texto="Carregando foto..." />}
+          {estado.tipo === 'erro' && <Erro>{estado.mensagem}</Erro>}
+          {estado.tipo === 'ausente' && <p className="muted">Foto não encontrada para este canhoto.</p>}
+          {dataUrl && (
+            <>
+              <button type="button" className="foto-btn" onClick={() => setAmpliada(true)} aria-label="Ampliar foto">
+                <img src={dataUrl} alt={`Canhoto da NF ${canhoto.numeroNota}`} />
+                <span className="foto-dica">Toque para ampliar</span>
+              </button>
+              <a className="btn-pequeno" href={dataUrl} download={`canhoto-NF-${canhoto.numeroNota}.jpg`}>
+                Baixar foto
+              </a>
+            </>
+          )}
+        </div>
+
+        <dl className="dados">
+          <div>
+            <dt>Cliente</dt>
+            <dd className="destaque">{canhoto.cliente}</dd>
+          </div>
+          <div>
+            <dt>Data de assinatura</dt>
+            <dd>{formatarData(canhoto.dataAssinatura)}</dd>
+          </div>
+          <div>
+            <dt>Assinado por</dt>
+            <dd>{canhoto.assinadoPor ?? <span className="muted">Não informado</span>}</dd>
+          </div>
+          <div>
+            <dt>Observação</dt>
+            <dd>{canhoto.observacao ?? <span className="muted">Nenhuma</span>}</dd>
+          </div>
+          <div>
+            <dt>Digitalizado em</dt>
+            <dd>{formatarDataHora(canhoto.criadoEm)}</dd>
+          </div>
+        </dl>
       </div>
 
-      <dl className="dados">
-        <dt>Cliente</dt>
-        <dd>{canhoto.cliente}</dd>
-        <dt>Data de assinatura</dt>
-        <dd>{formatarData(canhoto.dataAssinatura)}</dd>
-        <dt>Assinado por</dt>
-        <dd>{canhoto.assinadoPor ?? <span className="muted">Não informado</span>}</dd>
-        <dt>Observação</dt>
-        <dd>{canhoto.observacao ?? <span className="muted">Nenhuma</span>}</dd>
-        <dt>Digitalizado em</dt>
-        <dd>{formatarDataHora(canhoto.criadoEm)}</dd>
-      </dl>
-
-      <h3>Foto do canhoto</h3>
-      {estado.tipo === 'carregando' && <Carregando texto="Carregando foto..." />}
-      {estado.tipo === 'erro' && <Erro>{estado.mensagem}</Erro>}
-      {estado.tipo === 'ausente' && <p className="muted">Foto não encontrada para este canhoto.</p>}
-      {estado.tipo === 'ok' && (
-        <>
-          <img
-            className="foto"
-            src={`data:${estado.imagem.mimeType};base64,${estado.imagem.imagemBase64}`}
-            alt={`Canhoto da NF ${canhoto.numeroNota}`}
-            onClick={() => setAmpliada(true)}
-          />
-          <p className="muted pequeno">Toque na foto para ampliar.</p>
-          {ampliada && (
-            <div className="lightbox" role="dialog" aria-modal="true" onClick={() => setAmpliada(false)}>
-              <img
-                src={`data:${estado.imagem.mimeType};base64,${estado.imagem.imagemBase64}`}
-                alt={`Canhoto da NF ${canhoto.numeroNota} ampliado`}
-              />
-              <button type="button" className="btn btn-secundario lightbox-fechar">
-                Fechar
-              </button>
-            </div>
-          )}
-        </>
+      {total > 1 && (
+        <footer className="detalhe-nav">
+          <button type="button" className="btn btn-secundario" onClick={onAnterior} disabled={!onAnterior}>
+            ‹ Anterior
+          </button>
+          <span className="muted">
+            {posicao} de {total}
+          </span>
+          <button type="button" className="btn btn-secundario" onClick={onProximo} disabled={!onProximo}>
+            Próximo ›
+          </button>
+        </footer>
       )}
-    </section>
+
+      {ampliada && dataUrl && (
+        <div className="lightbox" role="dialog" aria-modal="true" aria-label="Foto ampliada" onClick={() => setAmpliada(false)}>
+          <img src={dataUrl} alt={`Canhoto da NF ${canhoto.numeroNota} ampliado`} />
+          <button type="button" className="btn lightbox-fechar" onClick={() => setAmpliada(false)}>
+            Fechar
+          </button>
+        </div>
+      )}
+    </aside>
   );
 }
