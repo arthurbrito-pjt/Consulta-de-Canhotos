@@ -1,6 +1,7 @@
 import {
   Timestamp,
   collection,
+  deleteField,
   doc,
   getDoc,
   getDocs,
@@ -94,11 +95,27 @@ export async function obterImagem(id: string): Promise<CanhotoImagem | null> {
 }
 
 /**
+ * Procura, para cada par (NF, cliente), um canhoto já salvo com a mesma NF e o mesmo cliente
+ * (duplicidade). Devolve, na mesma ordem, o canhoto mais recente encontrado ou null.
+ */
+export async function encontrarDuplicados(
+  chaves: { numeroNota: string; cliente: string }[],
+): Promise<(Canhoto | null)[]> {
+  return Promise.all(
+    chaves.map(async ({ numeroNota, cliente }) => {
+      const alvo = normalizarBusca(cliente);
+      const achados = await buscarPorNota(numeroNota);
+      return achados.find((c) => c.clienteBusca === alvo) ?? null;
+    }),
+  );
+}
+
+/**
  * Grava um ou vários canhotos (cada um com sua imagem) de forma atômica: ou salva todos, ou nenhum.
  * Limite de 20 por lote (cada imagem pode ter até ~700 KB e o commit aceita 10 MiB).
  */
 export async function salvarCanhotos(
-  itens: { dados: NovoCanhoto; imagem: CanhotoImagem }[],
+  itens: { dados: NovoCanhoto; imagem: CanhotoImagem; /** id de um canhoto existente a substituir */ substituirId?: string }[],
   uid: string,
 ): Promise<string[]> {
   if (itens.length === 0) throw new Error('Nenhum canhoto para salvar.');
@@ -106,12 +123,29 @@ export async function salvarCanhotos(
 
   const batch = writeBatch(db);
   const ids: string[] = [];
-  for (const { dados, imagem } of itens) {
+  for (const { dados, imagem, substituirId } of itens) {
     const data = dataDeISO(dados.dataAssinatura);
     if (!data) throw new Error('Data de assinatura inválida.');
     const nota = normalizarNota(dados.numeroNota);
     const cliente = dados.cliente.trim();
     if (!nota || !cliente) throw new Error('Preencha os campos obrigatórios.');
+
+    if (substituirId) {
+      // Substituição: mantém NF, cliente e autoria; troca data, assinatura, observação e foto.
+      batch.update(doc(canhotosRef, substituirId), {
+        dataAssinatura: Timestamp.fromDate(data),
+        assinadoPor: dados.assinadoPor?.trim() || deleteField(),
+        observacao: dados.observacao?.trim() || deleteField(),
+        atualizadoPor: uid,
+        atualizadoEm: serverTimestamp(),
+      });
+      batch.update(doc(db, 'canhotos_imagens', substituirId), {
+        imagemBase64: imagem.imagemBase64,
+        mimeType: imagem.mimeType,
+      });
+      ids.push(substituirId);
+      continue;
+    }
 
     const ref = doc(canhotosRef);
     const registro: Record<string, unknown> = {

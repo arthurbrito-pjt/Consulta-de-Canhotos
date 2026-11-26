@@ -66,6 +66,35 @@ service cloud.firestore {
         && d.criadoEm == request.time;
     }
 
+    // Substituição (re-digitalização da mesma NF/cliente): identidade e autoria ficam intactas;
+    // só data, assinatura e observação mudam, com carimbo de quem atualizou.
+    function canhotoSubstituivel() {
+      let d = request.resource.data;
+      let a = resource.data;
+      return d.keys().hasAll(['numeroNota', 'cliente', 'clienteBusca', 'dataAssinatura', 'criadoPor', 'criadoEm',
+                              'atualizadoPor', 'atualizadoEm'])
+        && d.keys().hasOnly(['numeroNota', 'cliente', 'clienteBusca', 'dataAssinatura',
+                             'assinadoPor', 'observacao', 'criadoPor', 'criadoEm', 'atualizadoPor', 'atualizadoEm'])
+        && d.numeroNota == a.numeroNota
+        && d.cliente == a.cliente
+        && d.clienteBusca == a.clienteBusca
+        && d.criadoPor == a.criadoPor
+        && d.criadoEm == a.criadoEm
+        && d.dataAssinatura is timestamp
+        && textoOpcional(d, 'assinadoPor', 200)
+        && textoOpcional(d, 'observacao', 1000)
+        && d.atualizadoPor == request.auth.uid
+        && d.atualizadoEm == request.time;
+    }
+
+    function imagemValida() {
+      return request.resource.data.keys().hasOnly(['imagemBase64', 'mimeType'])
+        && request.resource.data.imagemBase64 is string
+        && request.resource.data.imagemBase64.size() > 0
+        && request.resource.data.imagemBase64.size() <= 900000
+        && request.resource.data.mimeType in ['image/jpeg', 'image/png'];
+    }
+
     // ---------- Coleções ----------
 
     // Cada usuário lê o próprio perfil (mesmo desativado, para o app avisar). Admin lista, cria e edita.
@@ -78,11 +107,12 @@ service cloud.firestore {
       allow delete: if false;
     }
 
-    // Todos os perfis consultam; só "rotas" insere; registros são imutáveis.
+    // Todos os perfis consultam; só "rotas" insere e substitui (mesma NF/cliente); não há exclusão.
     match /canhotos/{id} {
       allow read: if temPerfil();
       allow create: if ehRotas() && canhotoValido();
-      allow update, delete: if false;
+      allow update: if ehRotas() && canhotoSubstituivel();
+      allow delete: if false;
     }
 
     // Imagem em base64 (separada para não pesar nas listagens).
@@ -90,13 +120,13 @@ service cloud.firestore {
     match /canhotos_imagens/{id} {
       allow read: if temPerfil();
       allow create: if ehRotas()
-        && request.resource.data.keys().hasOnly(['imagemBase64', 'mimeType'])
-        && request.resource.data.imagemBase64 is string
-        && request.resource.data.imagemBase64.size() > 0
-        && request.resource.data.imagemBase64.size() <= 900000
-        && request.resource.data.mimeType in ['image/jpeg', 'image/png']
+        && imagemValida()
         && existsAfter(/databases/$(database)/documents/canhotos/$(id));
-      allow update, delete: if false;
+      // A foto só é trocada junto com a substituição do canhoto (mesmo batch, carimbo atualizadoEm == agora).
+      allow update: if ehRotas()
+        && imagemValida()
+        && getAfter(/databases/$(database)/documents/canhotos/$(id)).data.get('atualizadoEm', null) == request.time;
+      allow delete: if false;
     }
   }
 }

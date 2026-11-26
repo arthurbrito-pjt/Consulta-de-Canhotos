@@ -168,3 +168,34 @@ test('admin mantém acesso normal aos canhotos (é rotas)', async () => {
   const db = env.authenticatedContext('admin1').firestore();
   await assertSucceeds(gravar(db, canhoto('admin1'), imagem(), 'adm'));
 });
+
+// ---------- Substituição de canhoto duplicado ----------
+const substituir = (db, id, campos = {}, img = imagem({ imagemBase64: 'BBBB' }), uid = 'rotas1') => {
+  const b = writeBatch(db);
+  b.update(doc(db, 'canhotos', id), {
+    dataAssinatura: Timestamp.fromDate(new Date(2025, 0, 2)), assinadoPor: 'Novo',
+    atualizadoPor: uid, atualizadoEm: serverTimestamp(), ...campos,
+  });
+  b.update(doc(db, 'canhotos_imagens', id), img);
+  return b.commit();
+};
+
+test('rotas substitui canhoto existente (dados + foto), mesmo criado por outro', async () => {
+  const db = env.authenticatedContext('rotas1').firestore();
+  await assertSucceeds(gravar(db, canhoto('rotas1'), imagem(), 'dup'));
+  const outro = env.authenticatedContext('admin1').firestore(); // admin também é rotas
+  await assertSucceeds(substituir(outro, 'dup', {}, imagem({ imagemBase64: 'CCCC' }), 'admin1'));
+});
+
+test('substituição: não troca NF/cliente/autor, nem sem carimbo, nem por não-rotas', async () => {
+  const db = env.authenticatedContext('rotas1').firestore();
+  await assertSucceeds(gravar(db, canhoto('rotas1'), imagem(), 'dup'));
+  await assertFails(substituir(db, 'dup', { numeroNota: '999' }));
+  await assertFails(substituir(db, 'dup', { cliente: 'Outro', clienteBusca: 'outro' }));
+  await assertFails(substituir(db, 'dup', { criadoPor: 'outro' }));
+  await assertFails(substituir(db, 'dup', { atualizadoPor: 'outro' }));
+  await assertFails(updateDoc(doc(db, 'canhotos/dup'), { assinadoPor: 'x' }));
+  await assertFails(updateDoc(doc(db, 'canhotos_imagens/dup'), { imagemBase64: 'ZZZZ' }));
+  const f = env.authenticatedContext('fiscal1').firestore();
+  await assertFails(substituir(f, 'dup', {}, imagem(), 'fiscal1'));
+});

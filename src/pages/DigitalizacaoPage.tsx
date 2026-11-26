@@ -11,9 +11,9 @@ import {
 } from '../lib/imagem';
 import { calcularFaixas } from '../lib/faixas';
 import { normalizarNota } from '../lib/texto';
-import { mensagemErroFirestore, salvarCanhotos } from '../services/canhotosService';
+import { encontrarDuplicados, mensagemErroFirestore, salvarCanhotos } from '../services/canhotosService';
 import { lerCanhotos, localizarQuadros } from '../services/leituraCanhotoService';
-import { CAMPO_ROTULO } from '../types';
+import { CAMPO_ROTULO, type Canhoto } from '../types';
 
 type Etapa = 'inicio' | 'lendo' | 'falha' | 'conferencia' | 'salvando' | 'sucesso';
 
@@ -33,6 +33,14 @@ interface Item {
   recortada: boolean;
 }
 
+interface Duplicado {
+  chave: number;
+  existente: Canhoto;
+  substituir: boolean;
+}
+
+const fmtData = (d: Date) => d.toLocaleDateString('pt-BR');
+
 export function DigitalizacaoPage() {
   const { user } = useAuth();
   const [etapa, setEtapa] = useState<Etapa>('inicio');
@@ -41,6 +49,7 @@ export function DigitalizacaoPage() {
   const [erroForm, setErroForm] = useState<string | null>(null);
   const [mostrarErros, setMostrarErros] = useState(false);
   const [salvos, setSalvos] = useState(0);
+  const [duplicados, setDuplicados] = useState<Duplicado[] | null>(null);
   const camera = useRef<HTMLInputElement>(null);
   const galeria = useRef<HTMLInputElement>(null);
 
@@ -146,14 +155,45 @@ export function DigitalizacaoPage() {
     setErroForm(null);
     setEtapa('salvando');
     try {
-      await salvarCanhotos(
-        itens.map((i) => ({
-          dados: i.form,
-          imagem: { imagemBase64: i.imagem.base64, mimeType: i.imagem.mimeType },
-        })),
-        user.uid,
+      // Mesma NF + mesmo cliente já salvos? Pede confirmação antes de substituir.
+      const existentes = await encontrarDuplicados(
+        itens.map((i) => ({ numeroNota: i.form.numeroNota, cliente: i.form.cliente })),
       );
-      setSalvos(itens.length);
+      const achados: Duplicado[] = itens.flatMap((i, k) => {
+        const existente = existentes[k];
+        return existente ? [{ chave: i.chave, existente, substituir: false }] : [];
+      });
+      if (achados.length > 0) {
+        setDuplicados(achados);
+        setEtapa('conferencia');
+        return;
+      }
+      await gravar([]);
+    } catch (err) {
+      setErroForm(err instanceof Error && !('code' in err) ? err.message : mensagemErroFirestore(err));
+      setEtapa('conferencia');
+    }
+  }
+
+  /** Salva os itens; duplicados marcados para substituir atualizam o canhoto existente, os demais são pulados. */
+  async function gravar(escolhas: Duplicado[]) {
+    if (!user) return;
+    setDuplicados(null);
+    setEtapa('salvando');
+    try {
+      const itensGravar = itens.flatMap((i) => {
+        const dup = escolhas.find((d) => d.chave === i.chave);
+        if (dup && !dup.substituir) return [];
+        return [
+          {
+            dados: i.form,
+            imagem: { imagemBase64: i.imagem.base64, mimeType: i.imagem.mimeType },
+            substituirId: dup?.existente.id,
+          },
+        ];
+      });
+      if (itensGravar.length > 0) await salvarCanhotos(itensGravar, user.uid);
+      setSalvos(itensGravar.length);
       setEtapa('sucesso');
     } catch (err) {
       setErroForm(err instanceof Error && !('code' in err) ? err.message : mensagemErroFirestore(err));
@@ -172,7 +212,11 @@ export function DigitalizacaoPage() {
     return (
       <div className="cartao">
         <div className="alerta alerta-ok" role="status">
-          {salvos === 1 ? '1 canhoto salvo com sucesso.' : `${salvos} canhotos salvos com sucesso.`}
+          {salvos === 0
+            ? 'Nada foi alterado: os canhotos já existiam e foram mantidos.'
+            : salvos === 1
+              ? '1 canhoto salvo com sucesso.'
+              : `${salvos} canhotos salvos com sucesso.`}
         </div>
         <button type="button" className="btn btn-primario" onClick={reiniciar}>
           Digitalizar outra foto
@@ -260,6 +304,56 @@ export function DigitalizacaoPage() {
             Descartar e tirar nova foto
           </button>
         </div>
+        {duplicados && (
+          <div className="modal-fundo" role="dialog" aria-modal="true" aria-labelledby="titulo-dup">
+            <div className="modal">
+              <h2 id="titulo-dup">{duplicados.length === 1 ? 'Canhoto já cadastrado' : 'Canhotos já cadastrados'}</h2>
+              <p className="muted">
+                {duplicados.length === 1
+                  ? 'Já existe um canhoto com esta nota e este cliente. Deseja substituir a foto e os dados pelos novos?'
+                  : 'Já existem canhotos com estas notas e clientes. Escolha o que fazer com cada um.'}
+              </p>
+              {duplicados.map((d) => {
+                const novo = itens.find((i) => i.chave === d.chave);
+                const escolher = (substituir: boolean) =>
+                  setDuplicados((l) => l && l.map((x) => (x.chave === d.chave ? { ...x, substituir } : x)));
+                return (
+                  <div key={d.chave} className="dup-item">
+                    <strong>
+                      NF {d.existente.numeroNota} · {d.existente.cliente}
+                    </strong>
+                    <div className="pequeno muted">
+                      Já salvo: assinado em {fmtData(d.existente.dataAssinatura)}
+                      {d.existente.assinadoPor ? ` por ${d.existente.assinadoPor}` : ''}
+                    </div>
+                    {novo && (
+                      <div className="pequeno muted">
+                        Novo: assinado em {novo.form.dataAssinatura.split('-').reverse().join('/')}
+                        {novo.form.assinadoPor ? ` por ${novo.form.assinadoPor}` : ''}
+                      </div>
+                    )}
+                    <div className="botoes-linha">
+                      <button type="button" className={d.substituir ? 'btn-pequeno' : 'btn-pequeno ativo'} onClick={() => escolher(false)}>
+                        Manter o existente
+                      </button>
+                      <button type="button" className={d.substituir ? 'btn-pequeno ativo' : 'btn-pequeno'} onClick={() => escolher(true)}>
+                        Substituir pelo novo
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+              <div className="acoes">
+                <button type="button" className="btn btn-primario" onClick={() => void gravar(duplicados)}>
+                  Confirmar
+                </button>
+                <button type="button" className="btn btn-secundario" onClick={() => setDuplicados(null)}>
+                  Voltar
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </form>
     );
   }
