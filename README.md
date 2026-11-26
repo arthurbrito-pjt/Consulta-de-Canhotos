@@ -58,7 +58,7 @@ Usuário autenticado sem documento em `usuarios` vê a tela "Acesso pendente" e 
 - Usa **Gemini** (`gemini-2.5-flash`, constante `MODELO` em `src/services/leituraCanhotoService.ts`) pelo SDK `firebase/ai`, sem Cloud Functions e sem Blaze. A chave do Gemini fica no Firebase, nunca no bundle.
 - Habilite uma vez: Console → **Build → AI Logic → Começar** → escolha **Gemini Developer API** (cria a chave e habilita as APIs).
 - A resposta é JSON com schema; o que for ilegível volta `null`. O front valida (nº da NF só dígitos, data real e não futura) e `obrigatoriosFaltando` lista o que falhou.
-- **App Check (opcional, desligado):** o código só o ativa se `VITE_RECAPTCHA_SITE_KEY` estiver definida. A chamada ao Gemini parte do navegador e o AI Logic não verifica o login; sem App Check, quem tiver a config web poderia gastar a cota gratuita. Mantenha em Console → App Check → APIs → Firebase AI Logic como **Não aplicado**, ou ative o App Check (reCAPTCHA Enterprise, chave por pontuação com o domínio do site) e defina a variável.
+- **App Check (necessário):** o endpoint do AI Logic deste projeto recusa chamadas sem token do App Check (401), mesmo no modo "monitoramento". O app usa reCAPTCHA Enterprise (`VITE_RECAPTCHA_SITE_KEY`, chave por pontuação com o domínio do site). Se aparecer `403 App attestation failed`, baixe o limite mínimo de pontuação do provedor em Console → App Check → Apps → Editar provedor.
 
 ## 4. Rodar localmente
 
