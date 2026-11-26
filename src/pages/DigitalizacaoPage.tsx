@@ -9,9 +9,10 @@ import {
   liberarImagem,
   type ImagemComprimida,
 } from '../lib/imagem';
+import { calcularFaixas } from '../lib/faixas';
 import { normalizarNota } from '../lib/texto';
 import { mensagemErroFirestore, salvarCanhotos } from '../services/canhotosService';
-import { lerCanhotos } from '../services/leituraCanhotoService';
+import { lerCanhotos, localizarQuadros } from '../services/leituraCanhotoService';
 import { CAMPO_ROTULO } from '../types';
 
 type Etapa = 'inicio' | 'lendo' | 'falha' | 'conferencia' | 'salvando' | 'sucesso';
@@ -27,14 +28,15 @@ interface Formulario {
 interface Item {
   chave: number;
   form: Formulario;
+  imagem: ImagemComprimida;
+  /** true = recorte da tira do canhoto; false = foto inteira. */
+  recortada: boolean;
 }
 
 export function DigitalizacaoPage() {
   const { user } = useAuth();
   const [etapa, setEtapa] = useState<Etapa>('inicio');
   const [itens, setItens] = useState<Item[]>([]);
-  /** Foto inteira: guardada em cada canhoto (as caixas da IA são imprecisas demais para recortar). */
-  const [foto, setFoto] = useState<ImagemComprimida | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [erroForm, setErroForm] = useState<string | null>(null);
   const [mostrarErros, setMostrarErros] = useState(false);
@@ -45,7 +47,6 @@ export function DigitalizacaoPage() {
   function reiniciar() {
     setEtapa('inicio');
     setItens([]);
-    setFoto(null);
     setErro(null);
     setErroForm(null);
     setMostrarErros(false);
@@ -63,16 +64,27 @@ export function DigitalizacaoPage() {
     try {
       const fonte = await abrirImagem(arquivo);
       try {
-        const lidos = await lerCanhotos(imagemParaLeitura(fonte));
+        const leituraImg = imagemParaLeitura(fonte);
+        const lidos = await lerCanhotos(leituraImg);
         if (lidos.length === 0) {
           setErro('Nenhum canhoto foi encontrado na foto. Tire uma nova foto, bem enquadrada e com boa luz.');
           setEtapa('falha');
           return;
         }
-        // Cada canhoto guarda a foto inteira; o lote (10 MiB) limita o tamanho de cada cópia.
-        const inteira = imagemParaArmazenar(fonte, null, Math.floor(8_000_000 / lidos.length));
+        // Recorta a faixa de cada canhoto; sem faixa segura, guarda a foto inteira (o lote de
+        // 10 MiB limita o tamanho de cada cópia).
+        // Com 2+ canhotos, uma segunda chamada (só de posição) permite recortar cada tira.
+        const quadros =
+          lidos.length > 1
+            ? await localizarQuadros(leituraImg, lidos.map((l) => l.campos.numeroNota))
+            : lidos.map(() => null);
+        const faixas = calcularFaixas(quadros);
+        const limite = Math.floor(8_000_000 / lidos.length);
+        let inteira: ImagemComprimida | null = null;
         const novos: Item[] = lidos.map((l, i) => ({
           chave: i,
+          recortada: faixas[i] !== null,
+          imagem: faixas[i] ? imagemParaArmazenar(fonte, faixas[i], limite) : (inteira ??= imagemParaArmazenar(fonte, null, limite)),
           form: {
             numeroNota: l.campos.numeroNota ?? '',
             cliente: l.campos.cliente ?? '',
@@ -81,7 +93,6 @@ export function DigitalizacaoPage() {
             observacao: l.campos.observacao ?? '',
           },
         }));
-        setFoto(inteira);
         setItens(novos);
         setEtapa('conferencia');
       } finally {
@@ -125,7 +136,7 @@ export function DigitalizacaoPage() {
 
   async function confirmar(e: FormEvent) {
     e.preventDefault();
-    if (!user || !foto) return;
+    if (!user) return;
     if (itens.some((i) => problema(i))) {
       setMostrarErros(true);
       setErroForm('Corrija os canhotos destacados antes de salvar (ou remova os que não quer guardar).');
@@ -138,7 +149,7 @@ export function DigitalizacaoPage() {
       await salvarCanhotos(
         itens.map((i) => ({
           dados: i.form,
-          imagem: { imagemBase64: foto.base64, mimeType: foto.mimeType },
+          imagem: { imagemBase64: i.imagem.base64, mimeType: i.imagem.mimeType },
         })),
         user.uid,
       );
@@ -180,8 +191,7 @@ export function DigitalizacaoPage() {
     return (
       <form className="cartao" onSubmit={confirmar}>
         <h2>{itens.length === 1 ? 'Confira o canhoto lido' : `Confira os ${itens.length} canhotos lidos`}</h2>
-        <p className="muted">Corrija o que for preciso. Nada é salvo até você confirmar. A foto inteira fica anexada a cada canhoto.</p>
-        {foto && <img className="foto foto-previa" src={foto.dataUrl} alt="Foto dos canhotos" />}
+        <p className="muted">Corrija o que for preciso. Nada é salvo até você confirmar.</p>
 
         {itens.some((i) => !i.form.dataAssinatura) && itens.length > 1 && (
           <label className="campo">
@@ -202,6 +212,15 @@ export function DigitalizacaoPage() {
                 Canhoto {idx + 1}
                 {item.form.numeroNota ? ` · NF ${normalizarNota(item.form.numeroNota)}` : ''}
               </legend>
+              <img
+                className="foto foto-previa"
+                src={item.imagem.dataUrl}
+                alt={item.recortada ? `Recorte do canhoto ${idx + 1}` : 'Foto inteira (não foi possível recortar este canhoto)'}
+              />
+              {!item.recortada && itens.length > 1 && (
+                <p className="muted">Não foi possível recortar este canhoto: será salva a foto inteira.</p>
+              )}
+
               <label className="campo">
                 <span>{CAMPO_ROTULO.numeroNota} *</span>
                 <input inputMode="numeric" {...campo('numeroNota')} />

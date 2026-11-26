@@ -63,5 +63,4 @@ export type Caixa = [number, number, number, number];
 /** Um canhoto lido pela IA dentro de uma foto (que pode conter vários). */
 export interface CanhotoLido {
   campos: Record<CampoCanhoto, string | null>;
-  caixa: Caixa | null;
 }

@@ -57,7 +57,7 @@ Usuário autenticado sem documento em `usuarios` vê a tela "Acesso pendente" e 
 
 - Usa **Gemini** (`gemini-2.5-flash`, constante `MODELO` em `src/services/leituraCanhotoService.ts`) pelo SDK `firebase/ai`, sem Cloud Functions e sem Blaze. A chave do Gemini fica no Firebase, nunca no bundle.
 - Habilite uma vez: Console → **Build → AI Logic → Começar** → escolha **Gemini Developer API** (cria a chave e habilita as APIs).
-- **Cota gratuita:** o Gemini Developer API no Free Tier limita ~20 requisições/dia **por modelo**. O app tenta `gemini-3.8-flash`, `gemini-3.5-flash` e `gemini-3.5-flash-lite` em sequência (lista `MODELOS`), e uma foto com vários canhotos conta como 1 requisição. Para volume maior, ative o faturamento (Blaze).
+- **Cota gratuita:** o Gemini Developer API no Free Tier limita ~20 requisições/dia **por modelo**. O app tenta `gemini-3.8-flash`, `gemini-3.5-flash` e `gemini-3.5-flash-lite` em sequência (lista `MODELOS`), e uma foto com 1 canhoto gasta 1 requisição, e com vários gasta 2 (leitura dos campos + localização para recortar cada tira). Para volume maior, ative o faturamento (Blaze).
 - A resposta é JSON com schema; o que for ilegível volta `null`. O front valida (nº da NF só dígitos, data real e não futura) e `obrigatoriosFaltando` lista o que falhou.
 - **App Check (necessário):** o endpoint do AI Logic deste projeto recusa chamadas sem token do App Check (401), mesmo no modo "monitoramento". O app usa reCAPTCHA Enterprise (`VITE_RECAPTCHA_SITE_KEY`, chave por pontuação com o domínio do site). Se aparecer `403 App attestation failed`, baixe o limite mínimo de pontuação do provedor em Console → App Check → Apps → Editar provedor.
 

@@ -32,11 +32,10 @@ Campos de cada canhoto:
 - dataAssinatura: a data de recebimento, em AAAA-MM-DD. Vem manuscrita no campo "DATA DE RECEBIMENTO" (ex.: "20 05 2026" = 2026-05-20) ou carimbada (ex.: "13 MAIO 2026" = 2026-05-13). Datas no Brasil são DD/MM/AAAA. Cada canhoto tem seu próprio carimbo/data; carimbos podem ficar deslocados e invadir a tira vizinha, então associe pela ordem e pela posição. NÃO use a data de EMISSÃO. A data de recebimento nunca é anterior à emissão do mesmo canhoto: se o ano manuscrito estiver borrado, o ano coerente com a emissão (mesmo ano ou o seguinte) ajuda a decidir. Se faltar dia, mês ou ano, ou houver dúvida real, use null.
 - dataEmissao: a data após "EMISSÃO:" no texto da tira, em AAAA-MM-DD, ou null se ilegível (usada só para conferir a data de recebimento).
 - assinadoPor: o nome de quem recebeu, quando legível no campo de identificação do recebedor (nome impresso, carimbo com nome/matrícula ou assinatura por extenso). Rubrica ilegível = null.
-- observacao: anotações escritas no canhoto (ex.: "recebido com avaria"), apenas se existirem; senão null.
-- caixa: [ymin, xmin, ymax, xmax], coordenadas de 0 a 1000 relativas à imagem inteira, envolvendo TODA a tira desse canhoto (do texto "RECEBEMOS" até o quadro da NF-e, incluindo o campo de data e o de assinatura).`;
+- observacao: anotações escritas no canhoto (ex.: "recebido com avaria"), apenas se existirem; senão null.`;
 
 const ai = getAI(app, { backend: new GoogleAIBackend() });
-const generationConfig = {
+const configLeitura = {
     temperature: 0,
     responseMimeType: 'application/json',
     responseSchema: Schema.object({
@@ -50,7 +49,6 @@ const generationConfig = {
               dataEmissao: Schema.string({ nullable: true, description: 'AAAA-MM-DD' }),
               assinadoPor: Schema.string({ nullable: true }),
               observacao: Schema.string({ nullable: true }),
-              caixa: Schema.array({ items: Schema.number(), description: '[ymin, xmin, ymax, xmax] de 0 a 1000' }),
             },
           }),
         }),
@@ -58,7 +56,34 @@ const generationConfig = {
     }),
 };
 // Alguns modelos travam sem responder: limite de tempo por tentativa para poder passar ao próximo.
-const modelos = MODELOS.map((model) => getGenerativeModel(ai, { model, generationConfig }, { timeout: 35_000 }));
+const modelosPara = (generationConfig: object) =>
+  MODELOS.map((model) => getGenerativeModel(ai, { model, generationConfig }, { timeout: 35_000 }));
+const modelosLeitura = modelosPara(configLeitura);
+
+type ModeloGen = ReturnType<typeof getGenerativeModel>;
+
+/** Tenta cada modelo em sequência; passa ao próximo em caso de cota, sobrecarga, travamento ou modelo indisponível. */
+async function gerarComFallback(lista: ModeloGen[], conteudo: Parameters<ModeloGen['generateContent']>[0]) {
+  let ultimoErro: unknown;
+  for (const modelo of lista) {
+    try {
+      // Picos de demanda (500/503) são temporários: 1 nova tentativa no mesmo modelo.
+      for (let tentativa = 0; ; tentativa++) {
+        try {
+          return await modelo.generateContent(conteudo);
+        } catch (e) {
+          const sobrecarga = /(500|503)|high demand|overloaded/i.test(String((e as Error).message));
+          if (!sobrecarga || tentativa >= 1) throw e;
+          await new Promise((r) => setTimeout(r, 1500));
+        }
+      }
+    } catch (e) {
+      ultimoErro = e;
+      if (!/(429|500|503|404)|timeout|timed out|abort|network|fetch|quota|RESOURCE_EXHAUSTED|high demand|overloaded|not found/i.test(String((e as Error).message))) throw e;
+    }
+  }
+  throw ultimoErro;
+}
 
 function textoOuNull(v: unknown, max: number): string | null {
   if (typeof v !== 'string') return null;
@@ -87,29 +112,7 @@ export async function lerCanhotos(imagem: { base64: string; mimeType: string }):
   let bruto: { canhotos?: unknown };
   try {
     const conteudo = [PROMPT, { inlineData: { data: imagem.base64, mimeType: imagem.mimeType } }];
-    let resposta;
-    let ultimoErro: unknown;
-    for (const modelo of modelos) {
-      try {
-        // Picos de demanda (500/503) são temporários: 1 nova tentativa no mesmo modelo.
-        for (let tentativa = 0; ; tentativa++) {
-          try {
-            resposta = await modelo.generateContent(conteudo);
-            break;
-          } catch (e) {
-            const sobrecarga = /(500|503)|high demand|overloaded/i.test(String((e as Error).message));
-            if (!sobrecarga || tentativa >= 1) throw e;
-            await new Promise((r) => setTimeout(r, 1500));
-          }
-        }
-        break;
-      } catch (e) {
-        ultimoErro = e;
-        // Cota estourada, sobrecarga ou modelo indisponível: passa para o próximo modelo.
-        if (!/(429|500|503|404)|timeout|timed out|abort|network|fetch|quota|RESOURCE_EXHAUSTED|high demand|overloaded|not found/i.test(String((e as Error).message))) throw e;
-      }
-    }
-    if (!resposta) throw ultimoErro;
+    const resposta = await gerarComFallback(modelosLeitura, conteudo);
     bruto = JSON.parse(resposta.response.text()) as { canhotos?: unknown };
   } catch (err) {
     console.error('Falha na leitura por IA', err);
@@ -140,6 +143,54 @@ export async function lerCanhotos(imagem: { base64: string; mimeType: string }):
       assinadoPor: textoOuNull(item.assinadoPor, 200),
       observacao: textoOuNull(item.observacao, 1000),
     };
-    return { campos, caixa: caixaValida(item.caixa) };
+    return { campos };
   });
+}
+
+const PROMPT_LOCALIZAR = `Esta foto tem vários canhotos de NF-e (tiras empilhadas). Cada tira tem à direita um quadro retangular com borda preta "NF-e Nº000.xxx.xxx SÉRIE 1".
+Detecte cada quadro retangular desses, de cima para baixo. Retorne o número da NF (só dígitos) e box_2d [ymin, xmin, ymax, xmax] de 0 a 1000 do quadro inteiro. Seja preciso.`;
+
+const modelosLocalizar = modelosPara({
+  temperature: 0,
+  responseMimeType: 'application/json',
+  responseSchema: Schema.object({
+    properties: {
+      canhotos: Schema.array({
+        items: Schema.object({
+          properties: {
+            numeroNota: Schema.string(),
+            box_2d: Schema.array({ items: Schema.number() }),
+          },
+        }),
+      }),
+    },
+  }),
+});
+
+/**
+ * Localiza o quadro "NF-e Nº..." de cada canhoto (chamada separada da leitura: misturar as duas
+ * tarefas faz o modelo errar as posições). Devolve uma caixa por nota, na mesma ordem; null se não achou.
+ * Qualquer falha aqui só significa "sem recorte": a foto inteira é usada.
+ */
+export async function localizarQuadros(
+  imagem: { base64: string; mimeType: string },
+  notas: (string | null)[],
+): Promise<(Caixa | null)[]> {
+  try {
+    const resposta = await gerarComFallback(modelosLocalizar, [
+      PROMPT_LOCALIZAR,
+      { inlineData: { data: imagem.base64, mimeType: imagem.mimeType } },
+    ]);
+    const bruto = JSON.parse(resposta.response.text()) as { canhotos?: { numeroNota?: unknown; box_2d?: unknown }[] };
+    const porNota = new Map<string, Caixa>();
+    for (const q of bruto.canhotos ?? []) {
+      const nota = normalizarNota(typeof q.numeroNota === 'string' ? q.numeroNota : '');
+      const caixa = caixaValida(q.box_2d);
+      if (nota && caixa) porNota.set(nota, caixa);
+    }
+    return notas.map((n) => (n ? (porNota.get(n) ?? null) : null));
+  } catch (err) {
+    console.warn('Não foi possível localizar os canhotos na foto; usando a foto inteira.', err);
+    return notas.map(() => null);
+  }
 }
