@@ -1,6 +1,6 @@
 # Consulta de Canhotos
 
-Web app (mobile-first) para digitalizar canhotos de NF por foto, com leitura por IA, e consultá-los depois.
+Web app (mobile-first) para digitalizar canhotos de NF por foto (uma foto pode ter vários canhotos), com leitura por IA, e consultá-los depois.
 Stack: Vite + React + TypeScript · Firebase Auth · Cloud Firestore · Firebase AI Logic (Gemini, OCR) · Firebase Hosting. Roda no plano gratuito (Spark).
 
 ## Estrutura

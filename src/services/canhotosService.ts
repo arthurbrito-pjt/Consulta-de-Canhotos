@@ -87,40 +87,49 @@ export async function obterImagem(id: string): Promise<CanhotoImagem | null> {
   return { imagemBase64: d.imagemBase64, mimeType: d.mimeType };
 }
 
-/** Grava canhoto + imagem de forma atômica (um único batch). */
-export async function salvarCanhoto(
-  dados: NovoCanhoto,
-  imagem: CanhotoImagem,
+/**
+ * Grava um ou vários canhotos (cada um com sua imagem) de forma atômica: ou salva todos, ou nenhum.
+ * Limite de 20 por lote (cada imagem pode ter até ~700 KB e o commit aceita 10 MiB).
+ */
+export async function salvarCanhotos(
+  itens: { dados: NovoCanhoto; imagem: CanhotoImagem }[],
   uid: string,
-): Promise<string> {
-  const data = dataDeISO(dados.dataAssinatura);
-  if (!data) throw new Error('Data de assinatura inválida.');
-  const nota = normalizarNota(dados.numeroNota);
-  const cliente = dados.cliente.trim();
-  if (!nota || !cliente) throw new Error('Preencha os campos obrigatórios.');
-
-  const ref = doc(canhotosRef);
-  const registro: Record<string, unknown> = {
-    numeroNota: nota,
-    cliente,
-    clienteBusca: normalizarBusca(cliente),
-    dataAssinatura: Timestamp.fromDate(data),
-    criadoPor: uid,
-    criadoEm: serverTimestamp(),
-  };
-  const assinadoPor = dados.assinadoPor?.trim();
-  const observacao = dados.observacao?.trim();
-  if (assinadoPor) registro.assinadoPor = assinadoPor;
-  if (observacao) registro.observacao = observacao;
+): Promise<string[]> {
+  if (itens.length === 0) throw new Error('Nenhum canhoto para salvar.');
+  if (itens.length > 20) throw new Error('Máximo de 20 canhotos por vez.');
 
   const batch = writeBatch(db);
-  batch.set(ref, registro);
-  batch.set(doc(db, 'canhotos_imagens', ref.id), {
-    imagemBase64: imagem.imagemBase64,
-    mimeType: imagem.mimeType,
-  });
+  const ids: string[] = [];
+  for (const { dados, imagem } of itens) {
+    const data = dataDeISO(dados.dataAssinatura);
+    if (!data) throw new Error('Data de assinatura inválida.');
+    const nota = normalizarNota(dados.numeroNota);
+    const cliente = dados.cliente.trim();
+    if (!nota || !cliente) throw new Error('Preencha os campos obrigatórios.');
+
+    const ref = doc(canhotosRef);
+    const registro: Record<string, unknown> = {
+      numeroNota: nota,
+      cliente,
+      clienteBusca: normalizarBusca(cliente),
+      dataAssinatura: Timestamp.fromDate(data),
+      criadoPor: uid,
+      criadoEm: serverTimestamp(),
+    };
+    const assinadoPor = dados.assinadoPor?.trim();
+    const observacao = dados.observacao?.trim();
+    if (assinadoPor) registro.assinadoPor = assinadoPor;
+    if (observacao) registro.observacao = observacao;
+
+    batch.set(ref, registro);
+    batch.set(doc(db, 'canhotos_imagens', ref.id), {
+      imagemBase64: imagem.imagemBase64,
+      mimeType: imagem.mimeType,
+    });
+    ids.push(ref.id);
+  }
   await batch.commit();
-  return ref.id;
+  return ids;
 }
 
 export function mensagemErroFirestore(err: unknown): string {

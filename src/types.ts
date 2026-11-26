@@ -57,8 +57,11 @@ export const CAMPO_ROTULO: Record<CampoCanhoto, string> = {
   observacao: 'Observação',
 };
 
-export interface LeituraCanhotoResultado {
+/** [ymin, xmin, ymax, xmax] normalizados de 0 a 1000 (formato do Gemini). */
+export type Caixa = [number, number, number, number];
+
+/** Um canhoto lido pela IA dentro de uma foto (que pode conter vários). */
+export interface CanhotoLido {
   campos: Record<CampoCanhoto, string | null>;
-  lidos: Record<CampoCanhoto, boolean>;
-  obrigatoriosFaltando: CampoObrigatorio[];
+  caixa: Caixa | null;
 }

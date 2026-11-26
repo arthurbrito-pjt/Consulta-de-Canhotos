@@ -2,11 +2,17 @@ import { useRef, useState, type ChangeEvent, type FormEvent } from 'react';
 import { Carregando, Erro } from '../components/Feedback';
 import { useAuth } from '../contexts/AuthContext';
 import { dataAssinaturaValida } from '../lib/datas';
-import { comprimirImagem, type ImagemComprimida } from '../lib/imagem';
+import {
+  abrirImagem,
+  imagemParaArmazenar,
+  imagemParaLeitura,
+  liberarImagem,
+  type ImagemComprimida,
+} from '../lib/imagem';
 import { normalizarNota } from '../lib/texto';
-import { mensagemErroFirestore, salvarCanhoto } from '../services/canhotosService';
-import { lerCanhoto } from '../services/leituraCanhotoService';
-import { CAMPO_ROTULO, type CampoObrigatorio } from '../types';
+import { mensagemErroFirestore, salvarCanhotos } from '../services/canhotosService';
+import { lerCanhotos } from '../services/leituraCanhotoService';
+import { CAMPO_ROTULO } from '../types';
 
 type Etapa = 'inicio' | 'lendo' | 'falha' | 'conferencia' | 'salvando' | 'sucesso';
 
@@ -18,26 +24,31 @@ interface Formulario {
   observacao: string;
 }
 
-const VAZIO: Formulario = { numeroNota: '', cliente: '', dataAssinatura: '', assinadoPor: '', observacao: '' };
+interface Item {
+  chave: number;
+  form: Formulario;
+  imagem: ImagemComprimida;
+  /** true = recorte do canhoto; false = foto inteira (a IA não localizou a tira). */
+  recortada: boolean;
+}
 
 export function DigitalizacaoPage() {
   const { user } = useAuth();
   const [etapa, setEtapa] = useState<Etapa>('inicio');
-  const [imagem, setImagem] = useState<ImagemComprimida | null>(null);
-  const [form, setForm] = useState<Formulario>(VAZIO);
-  const [faltando, setFaltando] = useState<CampoObrigatorio[]>([]);
+  const [itens, setItens] = useState<Item[]>([]);
   const [erro, setErro] = useState<string | null>(null);
   const [erroForm, setErroForm] = useState<string | null>(null);
+  const [mostrarErros, setMostrarErros] = useState(false);
+  const [salvos, setSalvos] = useState(0);
   const camera = useRef<HTMLInputElement>(null);
   const galeria = useRef<HTMLInputElement>(null);
 
   function reiniciar() {
     setEtapa('inicio');
-    setImagem(null);
-    setForm(VAZIO);
-    setFaltando([]);
+    setItens([]);
     setErro(null);
     setErroForm(null);
+    setMostrarErros(false);
   }
 
   async function aoEscolherArquivo(e: ChangeEvent<HTMLInputElement>) {
@@ -46,72 +57,100 @@ export function DigitalizacaoPage() {
     if (!arquivo) return;
 
     setErro(null);
-    setFaltando([]);
+    setErroForm(null);
+    setMostrarErros(false);
     setEtapa('lendo');
     try {
-      const comprimida = await comprimirImagem(arquivo);
-      setImagem(comprimida);
-      const leitura = await lerCanhoto(comprimida);
-
-      if (leitura.obrigatoriosFaltando.length > 0) {
-        setFaltando(leitura.obrigatoriosFaltando);
-        setEtapa('falha');
-        return;
+      const fonte = await abrirImagem(arquivo);
+      try {
+        const lidos = await lerCanhotos(imagemParaLeitura(fonte));
+        if (lidos.length === 0) {
+          setErro('Nenhum canhoto foi encontrado na foto. Tire uma nova foto, bem enquadrada e com boa luz.');
+          setEtapa('falha');
+          return;
+        }
+        let inteira: ImagemComprimida | null = null; // só se a IA não localizar alguma tira
+        const novos: Item[] = lidos.map((l, i) => {
+          let imagem: ImagemComprimida | null = null;
+          if (l.caixa) imagem = imagemParaArmazenar(fonte, l.caixa);
+          if (!imagem) imagem = inteira ??= imagemParaArmazenar(fonte);
+          return {
+            chave: i,
+            recortada: l.caixa !== null,
+            imagem,
+            form: {
+              numeroNota: l.campos.numeroNota ?? '',
+              cliente: l.campos.cliente ?? '',
+              dataAssinatura: l.campos.dataAssinatura ?? '',
+              assinadoPor: l.campos.assinadoPor ?? '',
+              observacao: l.campos.observacao ?? '',
+            },
+          };
+        });
+        setItens(novos);
+        setEtapa('conferencia');
+      } finally {
+        liberarImagem(fonte);
       }
-      setForm({
-        numeroNota: leitura.campos.numeroNota ?? '',
-        cliente: leitura.campos.cliente ?? '',
-        dataAssinatura: leitura.campos.dataAssinatura ?? '',
-        assinadoPor: leitura.campos.assinadoPor ?? '',
-        observacao: leitura.campos.observacao ?? '',
-      });
-      setErroForm(null);
-      setEtapa('conferencia');
     } catch (err) {
       setErro(err instanceof Error ? err.message : 'Falha ao processar a foto.');
       setEtapa('falha');
     }
   }
 
-  function validar(): string | null {
-    if (!normalizarNota(form.numeroNota)) return 'Informe o número da nota fiscal.';
-    if (!form.cliente.trim()) return 'Informe o nome do cliente.';
-    if (!dataAssinaturaValida(form.dataAssinatura)) return 'Informe uma data de assinatura válida (não futura).';
+  /** Mensagem de problema do item, ou null se estiver pronto para salvar. */
+  function problema(item: Item): string | null {
+    const f = item.form;
+    const nota = normalizarNota(f.numeroNota);
+    if (!nota) return 'Informe o número da nota fiscal.';
+    if (itens.filter((o) => normalizarNota(o.form.numeroNota) === nota).length > 1) {
+      return 'Esta NF aparece mais de uma vez nesta foto.';
+    }
+    if (!f.cliente.trim()) return 'Informe o nome do cliente.';
+    if (!dataAssinaturaValida(f.dataAssinatura)) return 'Informe uma data de assinatura válida (não futura).';
     return null;
+  }
+
+  function alterar(chave: number, k: keyof Formulario, valor: string) {
+    setItens((lista) => lista.map((i) => (i.chave === chave ? { ...i, form: { ...i.form, [k]: valor } } : i)));
+  }
+
+  function remover(chave: number) {
+    const restantes = itens.filter((i) => i.chave !== chave);
+    setItens(restantes);
+    if (restantes.length === 0) reiniciar();
+  }
+
+  function dataParaTodos(valor: string) {
+    setItens((lista) => lista.map((i) => ({ ...i, form: { ...i.form, dataAssinatura: valor } })));
   }
 
   async function confirmar(e: FormEvent) {
     e.preventDefault();
-    const problema = validar();
-    if (problema) return setErroForm(problema);
-    if (!imagem || !user) return;
+    if (!user) return;
+    if (itens.some((i) => problema(i))) {
+      setMostrarErros(true);
+      setErroForm('Corrija os canhotos destacados antes de salvar (ou remova os que não quer guardar).');
+      return;
+    }
 
     setErroForm(null);
     setEtapa('salvando');
     try {
-      await salvarCanhoto(
-        {
-          numeroNota: form.numeroNota,
-          cliente: form.cliente,
-          dataAssinatura: form.dataAssinatura,
-          assinadoPor: form.assinadoPor,
-          observacao: form.observacao,
-        },
-        { imagemBase64: imagem.base64, mimeType: imagem.mimeType },
+      await salvarCanhotos(
+        itens.map((i) => ({
+          dados: i.form,
+          imagem: { imagemBase64: i.imagem.base64, mimeType: i.imagem.mimeType },
+        })),
         user.uid,
       );
+      setSalvos(itens.length);
       setEtapa('sucesso');
     } catch (err) {
-      setErroForm(mensagemErroFirestore(err));
+      setErroForm(err instanceof Error && !('code' in err) ? err.message : mensagemErroFirestore(err));
       setEtapa('conferencia');
     }
   }
-
-  const campo = (k: keyof Formulario) => ({
-    value: form[k],
-    onChange: (e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
-      setForm((f) => ({ ...f, [k]: e.target.value })),
-  });
 
   const entradas = (
     <>
@@ -124,53 +163,87 @@ export function DigitalizacaoPage() {
     return (
       <div className="cartao">
         <div className="alerta alerta-ok" role="status">
-          Canhoto da NF {normalizarNota(form.numeroNota)} salvo com sucesso.
+          {salvos === 1 ? '1 canhoto salvo com sucesso.' : `${salvos} canhotos salvos com sucesso.`}
         </div>
         <button type="button" className="btn btn-primario" onClick={reiniciar}>
-          Digitalizar outro canhoto
+          Digitalizar outra foto
         </button>
       </div>
     );
   }
 
   if (etapa === 'lendo') {
-    return <Carregando texto="Lendo o canhoto com IA... isso leva alguns segundos." tela />;
+    return <Carregando texto="Lendo os canhotos com IA... isso leva alguns segundos." tela />;
   }
 
   if (etapa === 'conferencia' || etapa === 'salvando') {
     const salvando = etapa === 'salvando';
+    const hoje = new Date().toISOString().slice(0, 10);
     return (
       <form className="cartao" onSubmit={confirmar}>
-        <h2>Confira os dados lidos</h2>
-        <p className="muted">Corrija o que for preciso antes de confirmar.</p>
-        {imagem && <img className="foto foto-previa" src={imagem.dataUrl} alt="Foto do canhoto" />}
+        <h2>{itens.length === 1 ? 'Confira o canhoto lido' : `Confira os ${itens.length} canhotos lidos`}</h2>
+        <p className="muted">Corrija o que for preciso. Nada é salvo até você confirmar.</p>
 
-        <label className="campo">
-          <span>{CAMPO_ROTULO.numeroNota} *</span>
-          <input inputMode="numeric" required {...campo('numeroNota')} />
-        </label>
-        <label className="campo">
-          <span>{CAMPO_ROTULO.cliente} *</span>
-          <input required {...campo('cliente')} />
-        </label>
-        <label className="campo">
-          <span>{CAMPO_ROTULO.dataAssinatura} *</span>
-          <input type="date" required max={new Date().toISOString().slice(0, 10)} {...campo('dataAssinatura')} />
-        </label>
-        <label className="campo">
-          <span>{CAMPO_ROTULO.assinadoPor}</span>
-          <input {...campo('assinadoPor')} />
-        </label>
-        <label className="campo">
-          <span>{CAMPO_ROTULO.observacao}</span>
-          <textarea rows={3} {...campo('observacao')} />
-        </label>
+        {itens.length > 1 && (
+          <label className="campo">
+            <span>Mesma data de assinatura para todos (opcional)</span>
+            <input type="date" max={hoje} defaultValue="" onChange={(e) => dataParaTodos(e.target.value)} />
+          </label>
+        )}
+
+        {itens.map((item, idx) => {
+          const msg = mostrarErros ? problema(item) : null;
+          const campo = (k: keyof Formulario) => ({
+            value: item.form[k],
+            onChange: (e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => alterar(item.chave, k, e.target.value),
+          });
+          return (
+            <fieldset key={item.chave} className={`item-canhoto${msg ? ' item-erro' : ''}`}>
+              <legend>
+                Canhoto {idx + 1}
+                {item.form.numeroNota ? ` · NF ${normalizarNota(item.form.numeroNota)}` : ''}
+              </legend>
+              <img
+                className="foto foto-previa"
+                src={item.imagem.dataUrl}
+                alt={item.recortada ? `Recorte do canhoto ${idx + 1}` : 'Foto inteira (canhoto não localizado)'}
+              />
+              {!item.recortada && <p className="muted">Não foi possível recortar este canhoto: será salva a foto inteira.</p>}
+
+              <label className="campo">
+                <span>{CAMPO_ROTULO.numeroNota} *</span>
+                <input inputMode="numeric" {...campo('numeroNota')} />
+              </label>
+              <label className="campo">
+                <span>{CAMPO_ROTULO.cliente} *</span>
+                <input {...campo('cliente')} />
+              </label>
+              <label className="campo">
+                <span>{CAMPO_ROTULO.dataAssinatura} *</span>
+                <input type="date" max={hoje} {...campo('dataAssinatura')} />
+              </label>
+              <label className="campo">
+                <span>{CAMPO_ROTULO.assinadoPor}</span>
+                <input {...campo('assinadoPor')} />
+              </label>
+              <label className="campo">
+                <span>{CAMPO_ROTULO.observacao}</span>
+                <textarea rows={2} {...campo('observacao')} />
+              </label>
+
+              {msg && <Erro>{msg}</Erro>}
+              <button type="button" className="btn btn-secundario" disabled={salvando} onClick={() => remover(item.chave)}>
+                Não salvar este canhoto
+              </button>
+            </fieldset>
+          );
+        })}
 
         {erroForm && <Erro>{erroForm}</Erro>}
 
         <div className="acoes">
           <button type="submit" className="btn btn-primario" disabled={salvando}>
-            {salvando ? 'Salvando...' : 'Confirmar e salvar'}
+            {salvando ? 'Salvando...' : itens.length === 1 ? 'Confirmar e salvar' : `Confirmar e salvar ${itens.length} canhotos`}
           </button>
           <button type="button" className="btn btn-secundario" disabled={salvando} onClick={reiniciar}>
             Descartar e tirar nova foto
@@ -183,23 +256,15 @@ export function DigitalizacaoPage() {
   return (
     <div className="cartao">
       {entradas}
-      <h2>Digitalizar canhoto</h2>
+      <h2>Digitalizar canhotos</h2>
 
-      {etapa === 'falha' && (
-        <Erro>
-          {erro ? (
-            erro
-          ) : (
-            <>
-              Não foi possível ler: <strong>{faltando.map((f) => CAMPO_ROTULO[f]).join(', ')}</strong>. Nada foi
-              salvo. Tire uma nova foto, bem enquadrada, com boa luz e sem reflexos.
-            </>
-          )}
-        </Erro>
-      )}
+      {etapa === 'falha' && <Erro>{erro ?? 'Não foi possível ler a foto. Nada foi salvo.'}</Erro>}
 
       {etapa === 'inicio' && (
-        <p className="muted">Fotografe o canhoto inteiro, com o texto legível, boa iluminação e sem cortes.</p>
+        <p className="muted">
+          Fotografe um canhoto ou vários de uma vez (tiras empilhadas). Deixe o texto legível, com boa iluminação,
+          sem reflexos e sem cortes.
+        </p>
       )}
 
       <div className="acoes">
